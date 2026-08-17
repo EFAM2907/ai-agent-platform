@@ -22,3 +22,9 @@ class OrganizationRepository:
         stmt = select(Organization).where(Organization.id == organization_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+
+    async def get_by_tax_id(self, tax_id: str) -> Organization | None:
+        stmt = select(Organization).where(Organization.tax_id == tax_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
