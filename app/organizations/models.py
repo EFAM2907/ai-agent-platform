@@ -16,3 +16,4 @@ class Organization(Base):
     tax_id: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     plan_type: Mapped[str] = mapped_column(String(50), default="free")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True, default=None)
