@@ -1,10 +1,13 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, func
+from sqlalchemy import String, func, DateTime
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from app.users.models import User
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -16,4 +19,5 @@ class Organization(Base):
     tax_id: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     plan_type: Mapped[str] = mapped_column(String(50), default="free")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True, default=None)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    users: Mapped[list["User"]] = relationship(back_populates="organization")
