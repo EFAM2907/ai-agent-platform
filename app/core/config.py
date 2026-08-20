@@ -7,7 +7,10 @@ class Settings(BaseSettings):
     # App
     app_name: str = "AI Agent Platform"
     environment: str = "development"
-
+    secret_key: str
+    algorithm: str
+    access_token_expire_minutes: int
+    
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()

@@ -9,16 +9,17 @@ class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
         
-    async def create(self, data: UserCreate) -> User:
+    async def create(self, data: dict) -> User:
         user = User(
-            email = data.email,
-            hashed_password = data.password,
-            full_name = data.full_name,     
+            email=data["email"],
+            hashed_password=data["hashed_password"],
+            full_name=data["full_name"],
+            organization_id=data["organization_id"]
         )
         self.session.add(user)
         await self.session.flush()
         return user
-        
+            
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         stmt = select(User).where(User.id == user_id)
         result = await self.session.execute(stmt)

@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.users.repository import UserRepository
 from app.users.schemas import UserCreate, UserUpdate
 from app.users.models import User
+from app.core.security import hash_password
 from app.users.exceptions import UserAlreadyExistsError, UserNotFoundError
 import uuid
 
@@ -15,7 +16,11 @@ class UserService:
             user = await self.repository.get_by_email(data.email)
             if user:
                 raise UserAlreadyExistsError(data.email)
-        new_user = await self.repository.create(data)
+        data_dict = data.model_dump()
+        if "password" in data_dict:
+             plain_password = data_dict.pop("password")
+             data_dict["hashed_password"] = hash_password(plain_password)
+        new_user = await self.repository.create(data_dict)
         await self.session.commit()
         return new_user
 

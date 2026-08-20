@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime 
 from pydantic import BaseModel
 from app.users.models import UserRole
 import uuid
