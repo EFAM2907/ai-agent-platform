@@ -22,4 +22,9 @@ class UserResponse(BaseModel):
     organization_id: uuid.UUID
     created_at: datetime
     
+    
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole
+    
     model_config = {"from_attributes": True}

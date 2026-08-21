@@ -5,15 +5,19 @@ from app.core.exceptions import InvalidTokenError
 
 # --- Password hashing ---
 
-import bcrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 
-def hash_password(plain_password: str) -> str:
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(plain_password.encode("utf-8"), salt)
-    return hashed.decode("utf-8")
+ph = PasswordHasher()  # usa los defaults recomendados por OWASP
+
+def hash_password(password: str) -> str:
+    return ph.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    try:
+        return ph.verify(hashed_password, plain_password)
+    except VerifyMismatchError:
+        return False
 
 
 # --- JWT ---
@@ -35,6 +39,7 @@ def create_access_token(data: dict) -> str:
 def decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        print(f'esto es : {payload}')
         return payload
     except jwt.ExpiredSignatureError:
         raise InvalidTokenError("Token has expired")

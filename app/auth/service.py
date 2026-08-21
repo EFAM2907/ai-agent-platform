@@ -9,7 +9,7 @@ class AuthService:
 
     async def login(self, credentials: LoginRequest) -> str:
         user = await self.repository.get_by_email(credentials.email)
-        if user is None:
+        if user is None or user.deleted_at is not None:
             raise InvalidCredentialsError("Invalid email or password")
 
         verify = verify_password(plain_password=credentials.password, hashed_password=user.hashed_password)

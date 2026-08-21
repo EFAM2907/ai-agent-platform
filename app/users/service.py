@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.users.repository import UserRepository
 from app.users.schemas import UserCreate, UserUpdate
-from app.users.models import User
+from app.users.models import User, UserRole
 from app.core.security import hash_password
 from app.users.exceptions import UserAlreadyExistsError, UserNotFoundError
 import uuid
@@ -27,8 +27,8 @@ class UserService:
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         return await self.repository.get_by_id(user_id)
 
-    async def list(self, skip: int = 0, limit: int = 50) -> list[User]:
-        return await self.repository.list(skip, limit)
+    async def list(self, organization_id: uuid.UUID, skip: int = 0, limit: int = 50) -> list[User]:
+        return await self.repository.list(organization_id, skip, limit)
 
     async def update(self, user_id: uuid.UUID, data: UserUpdate) -> User:
         user = await self.repository.get_by_id(user_id)
@@ -51,3 +51,10 @@ class UserService:
         deleted_user = await self.repository.delete(user)
         await self.session.commit()
         return deleted_user
+    
+    async def update_role(self, user_id: uuid.UUID, new_role: UserRole) -> User:
+        user = await self.repository.get_by_id(user_id)
+        if user is None or user.deleted_at is not None:
+            raise UserNotFoundError(f"User {user_id} not found")
+
+        return await self.repository.update(user_id, {"role": new_role})

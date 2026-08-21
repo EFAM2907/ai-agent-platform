@@ -32,9 +32,13 @@ class UserRepository:
         return result.scalar_one_or_none()
         
         
-    async def list(self, skip: int = 0, limit: int = 50) -> list[User]:
+    async def list(self,organization_id, skip: int = 0, limit: int = 50) -> list[User]:
         result = await self.session.execute(
             select(User)
+            .where(
+                User.deleted_at.is_(None),
+                User.organization_id == organization_id
+                )
             .offset(skip)
             .limit(limit)
         )

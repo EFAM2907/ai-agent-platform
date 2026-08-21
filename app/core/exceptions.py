@@ -1,7 +1,7 @@
 # core/exceptions.py
 
 class InvalidTokenError(Exception):
-    """ recuerda sebas, lanza cuando un JWT es inválido, está mal firmado, o ha expirado."""
+    """ se lanza cuando un JWT es inválido, está mal firmado, o ha expirado."""
     def __init__(self, message: str = "Invalid or expired token"):
         self.message = message
         super().__init__(self.message)
