@@ -9,19 +9,21 @@ class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
         
-    async def create(self, data: dict) -> User:
+    async def create(self, admin: User, data: dict) -> User:
         user = User(
             email=data["email"],
             hashed_password=data["hashed_password"],
             full_name=data["full_name"],
-            organization_id=data["organization_id"]
+            organization_id=admin.organization_id
         )
         self.session.add(user)
         await self.session.flush()
         return user
             
-    async def get_by_id(self, user_id: uuid.UUID) -> User | None:
+    async def get_by_id(self, user_id: uuid.UUID, *, for_update: bool = False) -> User | None:
         stmt = select(User).where(User.id == user_id)
+        if for_update:
+            stmt = stmt.with_for_update()
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
         
@@ -55,4 +57,3 @@ class UserRepository:
         user.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()
         return user
-            

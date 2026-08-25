@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from app.core.config import settings
 from app.core.exceptions import InvalidTokenError
+import hashlib
+import secrets
 
 # --- Password hashing ---
 
@@ -45,3 +47,13 @@ def decode_access_token(token: str) -> dict:
         raise InvalidTokenError("Token has expired")
     except jwt.InvalidTokenError:
         raise InvalidTokenError("Invalid token")
+    
+    
+# --- Refresh Token ---
+
+
+def generate_refresh_token() -> str:
+    return secrets.token_urlsafe(64)  # token aleatorio, criptográficamente seguro
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()

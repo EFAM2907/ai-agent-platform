@@ -7,7 +7,6 @@ class UserCreate(BaseModel):
     email: str
     password: str
     full_name: str
-    organization_id: uuid.UUID
     
 class UserUpdate(BaseModel):
     email: str | None = None
@@ -21,6 +20,8 @@ class UserResponse(BaseModel):
     role: UserRole
     organization_id: uuid.UUID
     created_at: datetime
+
+    model_config = {"from_attributes": True}
     
     
 
@@ -28,3 +29,7 @@ class UserRoleUpdate(BaseModel):
     role: UserRole
     
     model_config = {"from_attributes": True}
+
+
+class OwnershipTransfer(BaseModel):
+    target_user_id: uuid.UUID

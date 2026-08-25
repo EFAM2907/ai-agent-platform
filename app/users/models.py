@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, ForeignKey, func,DateTime
+from sqlalchemy import Boolean, String, ForeignKey, func, DateTime, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -12,20 +12,45 @@ if TYPE_CHECKING:
     from app.organizations.models import Organization
 
 class UserRole(str, enum.Enum):
+    OWNER = "owner"
     ADMIN = "admin"
     MEMBER = "member"
+    VIEWER = "viewer"
 
-    
+
+ROLE_HIERARCHY = {
+    UserRole.VIEWER: 0,
+    UserRole.MEMBER: 1,
+    UserRole.ADMIN: 2,
+    UserRole.OWNER: 3,
+}
+
 class User(Base):
     __tablename__ = "users"
+
+    __table_args__ = (
+        Index(
+            "ix_users_email_unique_active",
+            "email",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_users_one_active_owner_per_organization",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("role = 'OWNER' AND deleted_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[str] = mapped_column(String(255))
     hashed_password: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[UserRole] = mapped_column(default=UserRole.MEMBER)
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
     organization: Mapped["Organization"] = relationship(back_populates="users")
