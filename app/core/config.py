@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     gemini_api_key: str | None = None
+    langfuse_api_url: str 
+    langfuse_public_key: str
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

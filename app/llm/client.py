@@ -16,6 +16,8 @@ import random
 import jsonschema
 
 from app.llm.base import LLMProvider
+from app.llm.cost_logger import CostLogger
+from app.llm.tracing import LangfuseTracer
 from app.llm.errors import (
     InvalidResponseError,
     LLMError,
@@ -52,12 +54,16 @@ class LLMClient:
         base_delay_seconds: float = 1.0,
         max_delay_seconds: float = 20.0,
         max_structured_repair_attempts: int = 2,
+        cost_logger: CostLogger | None = None,
+        tracer: LangfuseTracer | None = None,
     ) -> None:
         self._provider = provider
         self._max_retries = max_retries
         self._base_delay_seconds = base_delay_seconds
         self._max_delay_seconds = max_delay_seconds
         self._max_structured_repair_attempts = max_structured_repair_attempts
+        self._cost_logger = cost_logger
+        self._tracer = tracer
 
     @property
     def provider_name(self) -> str:
@@ -111,19 +117,50 @@ class LLMClient:
         last_error: LLMError | None = None
 
         for attempt in range(self._max_retries + 1):
+            generation = (
+                self._tracer.start_generation(request, self.provider_name)
+                if self._tracer is not None
+                else None
+            )
+
             try:
-                return await self._provider.generate(request)
+                response = await self._provider.generate(request)
             except _RETRYABLE_ERRORS as exc:
                 last_error = exc
+
+                if generation is not None:
+                    self._tracer.end_generation_error(generation, exc)
 
                 if attempt == self._max_retries:
                     break
 
                 delay = self._compute_delay(exc, attempt)
                 await asyncio.sleep(delay)
+                continue
+
+            if generation is not None:
+                self._tracer.end_generation_success(generation, response)
+
+            self._log_cost(request, response)
+            return response
 
         assert last_error is not None
         raise last_error
+
+    def _log_cost(self, request: LLMRequest, response: LLMResponse) -> None:
+        """Registra cada llamada real al proveedor que tuvo éxito --
+        incluidas las del loop de reparación, porque también
+        consumen tokens aunque el JSON haya salido inválido. No hace
+        nada si no se inyectó un CostLogger (uso opcional, por
+        ejemplo en tests)."""
+        if self._cost_logger is None:
+            return
+
+        self._cost_logger.log(
+            response,
+            tenant_id=request.tenant_id,
+            request_tag=request.request_tag,
+        )
 
     def _compute_delay(self, error: LLMError, attempt: int) -> float:
         """Backoff exponencial con jitter completo, respetando

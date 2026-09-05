@@ -151,7 +151,17 @@ class GeminiProvider(LLMProvider):
             )
 
         candidate = response.candidates[0]
-        finish_reason_raw = str(candidate.finish_reason) if candidate.finish_reason else "STOP"
+        # candidate.finish_reason is a real Enum object (e.g.
+        # FinishReason.STOP), not a plain string -- confirmed against
+        # a real API call. getattr(..., "name", ...) handles both the
+        # real enum (returns "STOP") and a plain string in tests
+        # (falls through to str(), which returns the string as-is).
+        raw_finish_reason = candidate.finish_reason
+        finish_reason_raw = (
+            getattr(raw_finish_reason, "name", None) or str(raw_finish_reason)
+            if raw_finish_reason
+            else "STOP"
+        )
 
         if finish_reason_raw in _CONTENT_FILTER_REASONS:
             raise ContentFilterError(
@@ -175,7 +185,14 @@ class GeminiProvider(LLMProvider):
             provider=self.name,
             tokens_used=TokenUsage(
                 input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
+                # Confirmed against a real API call: "thinking" models
+                # (gemini-3.6-flash and later) spend tokens on internal
+                # reasoning that are billed like output tokens but
+                # reported separately as thoughts_token_count, not
+                # folded into candidates_token_count. Omitting this
+                # would silently undercount real cost.
+                output_tokens=(usage.candidates_token_count or 0)
+                + (getattr(usage, "thoughts_token_count", None) or 0),
             ),
             latency_ms=latency_ms,
             finish_reason=_FINISH_REASON_MAP.get(finish_reason_raw, "stop"),
