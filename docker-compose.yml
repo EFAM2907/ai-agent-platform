@@ -17,8 +17,53 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis_data:/
+      
+
+  litellm:
+    # IMPORTANT: pin the version explicitly. A supply-chain incident
+    # affected 1.82.7 and 1.82.8 (March 2026) -- those were pulled
+    # and 1.83.0 shipped clean. Never use `:latest` in a real deploy.
+    image: docker.litellm.ai/berriai/litellm:1.83.0
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - LITELLM_SALT_KEY=${LITELLM_SALT_KEY}
+      - DATABASE_URL=postgresql://litellm:${LITELLM_DB_PASSWORD}@litellm-db:5432/litellm
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml"]
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+
+  litellm-db:
+    # Separate database from the app's own Postgres on purpose: this
+    # one holds LiteLLM's virtual keys, teams, and spend -- a
+    # different concern, a different failure domain.
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=litellm
+      - POSTGRES_PASSWORD=${LITELLM_DB_PASSWORD}
+      - POSTGRES_DB=litellm
+    volumes:
+      - litellm_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+
 
 volumes:
   postgres_data:
   redis_data:
+  litellm_db_data:

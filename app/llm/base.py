@@ -10,8 +10,10 @@ sin tocar una sola línea fuera de app/llm/providers/.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 from app.llm.schemas import LLMRequest, LLMResponse
+from app.llm.streaming import StreamUsageCollector
 
 
 class LLMProvider(ABC):
@@ -51,3 +53,32 @@ class LLMProvider(ABC):
         loop de reparación cuando el provider no lo soporta nativo.
         """
         raise NotImplementedError
+
+    def supports_streaming(self) -> bool:
+        """False por default. Se agregó DESPUÉS de que los tres
+        providers concretos ya existían -- por eso NO es
+        @abstractmethod: forzarlo hubiera roto OpenAIProvider y
+        AnthropicProvider hasta que también implementaran streaming.
+        Cada provider que sí soporte streaming debe sobreescribir
+        esto junto con generate_stream()."""
+        return False
+
+    async def generate_stream(
+        self, request: LLMRequest, collector: StreamUsageCollector | None = None
+    ) -> AsyncIterator[str]:
+        """Genera la respuesta en chunks de texto, para mostrarla en
+        vivo (SSE) en vez de esperar la respuesta completa. Sin
+        retries ni loop de reparación de salida estructurada -- ver
+        LLMClient.generate_stream() para el porqué.
+
+        If a collector is passed, providers that support streaming
+        should fill collector.final_response once the stream ends,
+        so the caller (LLMClient) can log cost and close the trace
+        with real usage data -- without changing what gets yielded.
+
+        Default: no soportado. Los providers que sí lo implementen
+        sobreescriben este método."""
+        raise NotImplementedError(
+            f"El provider '{self.name}' todavía no soporta streaming"
+        )
+        yield  # pragma: no cover -- hace de este un generador válido

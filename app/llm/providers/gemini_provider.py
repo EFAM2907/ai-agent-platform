@@ -27,6 +27,7 @@ from app.llm.errors import (
 )
 from app.llm.errors import TimeoutError_ as LLMTimeoutError
 from app.llm.schemas import LLMRequest, LLMResponse, Role, TokenUsage
+from app.llm.streaming import StreamUsageCollector
 
 # Mapea el finish_reason nativo de Gemini (google.genai.types.FinishReason,
 # un str-enum: "STOP", "MAX_TOKENS", etc.) al set fijo de LLMResponse.
@@ -63,6 +64,83 @@ class GeminiProvider(LLMProvider):
         # aquí — se deja en False para que LLMClient use su loop de
         # reparación mientras tanto. Ver TODO en generate().
         return False
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    async def generate_stream(
+        self, request: LLMRequest, collector: StreamUsageCollector | None = None
+    ):
+        """Yields text deltas as they arrive from Gemini. No retries,
+        no structured-output repair -- see LLMClient.generate_stream()
+        for why those don't mix well with streaming.
+
+        If a collector is passed, it gets filled with the aggregated
+        LLMResponse (full text, real token usage, finish_reason) once
+        the stream ends -- built from the accumulated chunks, not
+        from any single one, since usage_metadata typically only
+        arrives fully populated on the final chunk."""
+        started_at = time.perf_counter()
+        system_instruction, contents = self._build_contents(request)
+
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=request.temperature,
+            max_output_tokens=request.max_tokens,
+        )
+
+        stream = await self._client.aio.models.generate_content_stream(
+            model=request.model,
+            contents=contents,
+            config=config,
+        )
+
+        accumulated_text: list[str] = []
+        last_chunk = None
+
+        async for chunk in stream:
+            last_chunk = chunk
+            # Not every chunk carries text (e.g. the final chunk may
+            # only carry usage_metadata with no new content).
+            if chunk.text:
+                accumulated_text.append(chunk.text)
+                yield chunk.text
+
+        if collector is not None:
+            collector.final_response = self._build_stream_final_response(
+                last_chunk, "".join(accumulated_text), request.model, started_at
+            )
+
+    def _build_stream_final_response(
+        self, last_chunk, full_text: str, model: str, started_at: float
+    ) -> LLMResponse | None:
+        """Best-effort: if the last chunk doesn't carry the usage/
+        candidate info we expect, returns None instead of raising --
+        a stream that already succeeded for the caller shouldn't
+        break just because cost accounting couldn't be completed."""
+        if last_chunk is None:
+            return None
+
+        try:
+            candidate = last_chunk.candidates[0] if last_chunk.candidates else None
+            mapped_finish_reason, _ = self._extract_finish_reason(
+                candidate.finish_reason if candidate else None
+            )
+            usage = last_chunk.usage_metadata
+            return LLMResponse(
+                content=full_text,
+                model=model,
+                provider=self.name,
+                tokens_used=TokenUsage(
+                    input_tokens=usage.prompt_token_count or 0,
+                    output_tokens=(usage.candidates_token_count or 0)
+                    + (getattr(usage, "thoughts_token_count", None) or 0),
+                ),
+                latency_ms=(time.perf_counter() - started_at) * 1000,
+                finish_reason=mapped_finish_reason,
+            )
+        except (AttributeError, IndexError):
+            return None
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         started_at = time.perf_counter()
@@ -137,6 +215,21 @@ class GeminiProvider(LLMProvider):
         details = str(exc.details).lower() if exc.details else ""
         return "safety" in details or "blocked" in details
 
+    @staticmethod
+    def _extract_finish_reason(raw_finish_reason) -> tuple[str, str]:
+        """Returns (mapped, raw). candidate.finish_reason is a real
+        Enum object (e.g. FinishReason.STOP), not a plain string --
+        confirmed against a real API call. getattr(..., "name", ...)
+        handles both the real enum (returns "STOP") and a plain
+        string in tests (falls through to str(), which returns the
+        string as-is)."""
+        raw = (
+            getattr(raw_finish_reason, "name", None) or str(raw_finish_reason)
+            if raw_finish_reason
+            else "STOP"
+        )
+        return _FINISH_REASON_MAP.get(raw, "stop"), raw
+
     def _to_llm_response(
         self,
         response: genai_types.GenerateContentResponse,
@@ -151,16 +244,8 @@ class GeminiProvider(LLMProvider):
             )
 
         candidate = response.candidates[0]
-        # candidate.finish_reason is a real Enum object (e.g.
-        # FinishReason.STOP), not a plain string -- confirmed against
-        # a real API call. getattr(..., "name", ...) handles both the
-        # real enum (returns "STOP") and a plain string in tests
-        # (falls through to str(), which returns the string as-is).
-        raw_finish_reason = candidate.finish_reason
-        finish_reason_raw = (
-            getattr(raw_finish_reason, "name", None) or str(raw_finish_reason)
-            if raw_finish_reason
-            else "STOP"
+        mapped_finish_reason, finish_reason_raw = self._extract_finish_reason(
+            candidate.finish_reason
         )
 
         if finish_reason_raw in _CONTENT_FILTER_REASONS:
@@ -195,5 +280,5 @@ class GeminiProvider(LLMProvider):
                 + (getattr(usage, "thoughts_token_count", None) or 0),
             ),
             latency_ms=latency_ms,
-            finish_reason=_FINISH_REASON_MAP.get(finish_reason_raw, "stop"),
+            finish_reason=mapped_finish_reason,
         )

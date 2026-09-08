@@ -26,6 +26,7 @@ from app.llm.errors import (
 )
 from app.llm.errors import TimeoutError_ as LLMTimeoutError
 from app.llm.schemas import LLMRequest, LLMResponse, Message, Role
+from app.llm.streaming import StreamUsageCollector
 
 # Errores que vale la pena reintentar: son transitorios por naturaleza.
 # ContentFilterError e InvalidResponseError NO están aquí a propósito:
@@ -79,6 +80,55 @@ class LLMClient:
             response = await self._ensure_structured_output(request, response)
 
         return response
+
+    async def generate_stream(self, request: LLMRequest):
+        """Streams text deltas directly from the provider, for live
+        display (SSE) instead of waiting for the full response.
+
+        Deliberately NOT wrapped in retries or the structured-output
+        repair loop: retrying a stream mid-flight would mean the
+        caller sees a partial answer, then a second one starting
+        over -- confusing and hard to render correctly on the
+        frontend. And repairing structured output requires the full
+        response before you can even attempt to parse it, which
+        defeats the purpose of streaming. Use generate() instead when
+        you need either of those guarantees; use generate_stream()
+        only for plain conversational text meant to be shown live.
+
+        Cost logging and Langfuse tracing still happen here, but only
+        AFTER the stream ends -- usage totals aren't known mid-flight.
+        If the provider couldn't report final usage (best-effort),
+        nothing gets logged for this call rather than logging zeros.
+        """
+        if not self._provider.supports_streaming():
+            raise NotImplementedError(
+                f"El provider '{self.provider_name}' no soporta streaming"
+            )
+
+        generation = (
+            self._tracer.start_generation(request, self.provider_name)
+            if self._tracer is not None
+            else None
+        )
+        collector = StreamUsageCollector()
+
+        try:
+            async for chunk in self._provider.generate_stream(request, collector):
+                yield chunk
+        except Exception as exc:
+            if generation is not None:
+                self._tracer.end_generation_error(generation, exc)
+            raise
+
+        if collector.final_response is not None:
+            if generation is not None:
+                self._tracer.end_generation_success(generation, collector.final_response)
+            self._log_cost(request, collector.final_response)
+        elif generation is not None:
+            # No se pudo obtener el uso real -- cerramos la traza de
+            # todos modos para que no quede "abierta" para siempre en
+            # el dashboard de Langfuse.
+            generation.end()
 
     async def complete(
         self,
