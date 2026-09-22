@@ -1274,3 +1274,37 @@ body {
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* Header desplegable de una seccion del sidebar (hoy: Miembros) --
+   mismo look que .sidebar__section-title, solo agrega el reset de
+   boton, el flex para el chevron a la derecha, y su rotacion. */
+.sidebar__section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.sidebar__section-toggle .sidebar__section-title {
+  padding: 0 2px;
+}
+
+.sidebar__section-toggle:hover .sidebar__section-title {
+  color: var(--text-dim);
+}
+
+.sidebar__section-chevron {
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-right: 2px;
+  transition: transform 0.15s ease;
+}
+
+.sidebar__section-chevron--open {
+  transform: rotate(180deg);
+}

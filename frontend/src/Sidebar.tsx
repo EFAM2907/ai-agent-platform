@@ -61,6 +61,11 @@ export function Sidebar({
 
   // Menu contextual ("...") de cada item del historial: solo uno
   // abierto a la vez, identificado por el id de la sesion.
+  // Colapsado por defecto -- la lista de miembros competia por espacio
+  // vertical con el historial de conversaciones, que es lo que se usa
+  // todo el tiempo; el conteo solo (sin expandir) ya responde "cuantos
+  // somos" sin gastar esa altura.
+  const [membersExpanded, setMembersExpanded] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -189,16 +194,38 @@ export function Sidebar({
 
       {canSeeMembers && (
         <div className="sidebar__section">
-          <div className="sidebar__section-title">Miembros ({members!.length})</div>
-          <div className="sidebar__members">
-            {members!.slice(0, 6).map((member) => (
-              <div key={member.id} className="sidebar__member">
-                <span className="sidebar__member-avatar">{initials(member.full_name)}</span>
-                <span className="sidebar__member-name">{member.full_name}</span>
-                <span className="sidebar__member-role">{member.role}</span>
-              </div>
-            ))}
-          </div>
+          <button
+            type="button"
+            className="sidebar__section-toggle"
+            onClick={() => setMembersExpanded((prev) => !prev)}
+            aria-expanded={membersExpanded}
+          >
+            <span className="sidebar__section-title">Miembros ({members!.length})</span>
+            <svg
+              className={`sidebar__section-chevron${membersExpanded ? " sidebar__section-chevron--open" : ""}`}
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {membersExpanded && (
+            <div className="sidebar__members">
+              {members!.slice(0, 6).map((member) => (
+                <div key={member.id} className="sidebar__member">
+                  <span className="sidebar__member-avatar">{initials(member.full_name)}</span>
+                  <span className="sidebar__member-name">{member.full_name}</span>
+                  <span className="sidebar__member-role">{member.role}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
