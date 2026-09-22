@@ -1,4 +1,13 @@
-import type { ChatReply, ChatSession, ChatSessionSummary, Organization, UserProfile } from "./types";
+import type {
+  ChatReply,
+  ChatSession,
+  ChatSessionSummary,
+  GmailPollResult,
+  GmailStatus,
+  GmailUnresolvedList,
+  Organization,
+  UserProfile,
+} from "./types";
 
 // Sin barra final a proposito, mismo motivo que settings.litellm_base_url
 // en el backend (app/core/config.py): evita el bug clasico de URL con
@@ -287,4 +296,28 @@ export async function changePassword(newPassword: string): Promise<void> {
 
 export async function getOrganization(organizationId: string): Promise<Organization> {
   return authedRequest<Organization>(`/organizations/${organizationId}`);
+}
+
+// -- Gmail --
+// Requieren ADMIN/OWNER en el backend (ver app/gmail/api.py) -- solo se
+// llaman cuando App.tsx ya confirmo ese rol, igual que listMembers().
+
+export async function getGmailStatus(): Promise<GmailStatus> {
+  return authedRequest<GmailStatus>("/gmail/status");
+}
+
+export async function getGmailAuthorizationUrl(): Promise<{ authorization_url: string }> {
+  return authedRequest<{ authorization_url: string }>("/gmail/connect");
+}
+
+export async function disconnectGmail(): Promise<void> {
+  await authedRequest<void>("/gmail/connection", { method: "DELETE" });
+}
+
+export async function pollGmailNow(): Promise<GmailPollResult> {
+  return authedRequest<GmailPollResult>("/gmail/poll", { method: "POST" });
+}
+
+export async function listUnresolvedGmail(): Promise<GmailUnresolvedList> {
+  return authedRequest<GmailUnresolvedList>("/gmail/unresolved?limit=20");
 }

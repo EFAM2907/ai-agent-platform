@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatSessionSummary, Organization, UserProfile } from "./types";
+import type { ChatSessionSummary, GmailStatus, Organization, UserProfile } from "./types";
 import { RobotIcon } from "./RobotIcon";
 
 interface SidebarProps {
@@ -18,6 +18,12 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void;
   onLogout: () => void;
   onChangePassword: () => void;
+  // null: no se pudo consultar (rol sin permiso, o todavia no cargo) --
+  // mismo criterio que members===null. canManageIntegrations es quien
+  // decide si vale la pena mostrar el estado real o el texto generico.
+  gmailStatus: GmailStatus | null;
+  canManageIntegrations: boolean;
+  onOpenGmail: () => void;
 }
 
 function formatSessionLabel(session: ChatSessionSummary): string {
@@ -47,6 +53,9 @@ export function Sidebar({
   onDeleteSession,
   onLogout,
   onChangePassword,
+  gmailStatus,
+  canManageIntegrations,
+  onOpenGmail,
 }: SidebarProps) {
   const canSeeMembers = members !== null;
 
@@ -149,18 +158,33 @@ export function Sidebar({
 
       <div className="sidebar__section">
         <div className="sidebar__section-title">Integraciones</div>
-        {/* Decorativo a proposito -- no existe todavia un modelo de
-            integraciones en el backend, igual que en el dashboard
-            anterior. Mostrarlo como texto fijo es mas honesto que
-            simular que es data real. */}
+        {/* Slack sigue siendo decorativo a proposito -- no existe todavia
+            un modelo de esa integracion en el backend. Email si es real:
+            Gmail esta completo (app/gmail/), asi que este ya refleja el
+            estado de verdad en vez de simular data. */}
         <div className="sidebar__integration-row">
           <span className="sidebar__integration-dot sidebar__integration-dot--ok" />
           Slack
         </div>
-        <div className="sidebar__integration-row">
-          <span className="sidebar__integration-dot sidebar__integration-dot--ok" />
-          Email
-        </div>
+        {canManageIntegrations ? (
+          <button
+            type="button"
+            className="sidebar__integration-row sidebar__integration-row--btn"
+            onClick={onOpenGmail}
+          >
+            <span
+              className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+            />
+            {gmailStatus?.connected ? `Email · ${gmailStatus.google_email}` : "Email · conectar"}
+          </button>
+        ) : (
+          <div className="sidebar__integration-row">
+            <span
+              className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+            />
+            Email
+          </div>
+        )}
       </div>
 
       {canSeeMembers && (

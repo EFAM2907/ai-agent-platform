@@ -43,3 +43,35 @@ export interface Organization {
   plan_type: string;
   created_at: string;
 }
+
+export interface GmailStatus {
+  connected: boolean;
+  google_email?: string | null;
+  connected_at?: string | null;
+  last_polled_at?: string | null;
+}
+
+export interface GmailPollResult {
+  examined: number;
+  replied: number;
+  skipped: number;
+  failed: number;
+  skip_reasons: Record<string, number>;
+}
+
+export interface GmailUnresolvedMessage {
+  id: string;
+  sender: string | null;
+  tracking_number: string | null;
+  outcome: string;
+  detail: string | null;
+  attempts: number;
+  processed_at: string;
+  gmail_link: string | null;
+}
+
+export interface GmailUnresolvedList {
+  total: number;
+  returned: number;
+  messages: GmailUnresolvedMessage[];
+}

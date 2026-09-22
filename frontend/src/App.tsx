@@ -4,6 +4,7 @@ import {
   deleteChatSession,
   getAccessToken,
   getCurrentUser,
+  getGmailStatus,
   getOrganization,
   listChatSessions,
   listMembers,
@@ -12,9 +13,10 @@ import {
   renameChatSession,
 } from "./api";
 import { ChangePasswordModal, ChangePasswordScreen } from "./ChangePassword";
+import { GmailPanel } from "./GmailPanel";
 import { MainChat } from "./MainChat";
 import { Sidebar } from "./Sidebar";
-import type { ChatSessionSummary, Organization, UserProfile } from "./types";
+import type { ChatSessionSummary, GmailStatus, Organization, UserProfile } from "./types";
 import { useChat } from "./useChat";
 
 const PLATFORM_NAME = "AI Support";
@@ -80,6 +82,11 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
   // distinto de [] (organizacion sin mas miembros).
   const [members, setMembers] = useState<UserProfile[] | null>(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  // null: todavia no se sabe (o el rol no tiene permiso, GET
+  // /gmail/status tambien exige ADMIN/OWNER) -- mismo criterio que
+  // members. Se carga junto con members mas abajo, mismo chequeo de rol.
+  const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
+  const [showGmailModal, setShowGmailModal] = useState(false);
 
   const chat = useChat(onLoggedOut);
 
@@ -127,6 +134,12 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
             if (!cancelled) setMembers(memberList);
           } catch {
             if (!cancelled) setMembers(null);
+          }
+          try {
+            const status = await getGmailStatus();
+            if (!cancelled) setGmailStatus(status);
+          } catch {
+            if (!cancelled) setGmailStatus(null);
           }
         }
       } catch (err) {
@@ -245,6 +258,9 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
         onDeleteSession={(id) => void handleDeleteSession(id)}
         onLogout={() => void handleLogout()}
         onChangePassword={() => setShowPasswordModal(true)}
+        gmailStatus={gmailStatus}
+        canManageIntegrations={currentUser?.role === "admin" || currentUser?.role === "owner"}
+        onOpenGmail={() => setShowGmailModal(true)}
       />
       <MainChat
         platformName={PLATFORM_NAME}
@@ -253,6 +269,13 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
         chat={chat}
       />
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
+      {showGmailModal && (
+        <GmailPanel
+          status={gmailStatus}
+          onStatusChange={setGmailStatus}
+          onClose={() => setShowGmailModal(false)}
+        />
+      )}
     </div>
   );
 }

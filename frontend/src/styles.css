@@ -1157,3 +1157,120 @@ body {
     right: 16px;
   }
 }
+
+/* ---------- panel de Gmail ---------- */
+
+/* La fila de Email en "Integraciones" pasa de <div> decorativo a
+   <button> real cuando el rol puede gestionar Gmail (ADMIN/OWNER) --
+   mismo tamaño/spacing que .sidebar__integration-row, solo agrega el
+   reset de boton y el hover. */
+.sidebar__integration-row--btn {
+  font: inherit;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar__integration-row--btn:hover {
+  background: var(--panel-2);
+}
+
+.gmail-panel {
+  max-width: 380px;
+}
+
+.gmail-panel__desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0 0 4px;
+}
+
+.gmail-panel__refresh {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  padding: 4px 0 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gmail-panel__refresh:hover {
+  color: var(--text-dim);
+}
+
+.gmail-panel__account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.gmail-panel__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  font-size: 12.5px;
+  margin: 0 0 12px;
+}
+
+.gmail-panel__meta dt {
+  color: var(--text-faint);
+}
+
+.gmail-panel__meta dd {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.gmail-panel__unresolved {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.gmail-panel__unresolved-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.gmail-panel__unresolved-sender {
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.gmail-panel__unresolved-detail {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gmail-panel__unresolved-row a {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.gmail-panel__disconnect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
