@@ -1,0 +1,96 @@
+# El gateway expone nombres de modelo estables para la aplicación.  La
+# elección de proveedor/modelo real queda centralizada aquí, no repartida
+# entre los consumidores del LLMClient.
+model_list:
+  - model_name: gemini-3.6-flash
+    litellm_params:
+      model: gemini/gemini-3.6-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  # TEMPORAL: los dos flash-lite de abajo se usan como par barato/caro
+  # mientras Anthropic/OpenAI siguen sin credito -- ver
+  # app/chat/service.py CHEAP_MODEL/EXPENSIVE_MODEL. Quitar cuando se
+  # revierta ese cambio.
+  #
+  # gemini-2.5-flash-lite ya no esta disponible para cuentas nuevas
+  # (Google responde 404 y recomienda gemini-3.5-flash-lite), asi que el
+  # tier caro temporal usa gemini-3.5-flash-lite. Verificar los limites
+  # reales de la cuenta en https://aistudio.google.com/rate-limit -- si
+  # el cupo resulta peor que el de gemini-3.1-flash-lite, basta con
+  # intercambiar CHEAP_MODEL/EXPENSIVE_MODEL en app/chat/service.py.
+  - model_name: gemini-3.5-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-3.1-flash-lite
+    litellm_params:
+      model: gemini/gemini-3.1-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gpt-5.6-luna
+    litellm_params:
+      model: openai/gpt-5.6-luna
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # gemini-embedding-001 (no gemini-embedding-2) a proposito: el modelo
+  # nuevo genera un unico embedding agregado para una lista de inputs
+  # (uso multimodal), mientras que el RAG necesita un vector por chunk --
+  # gemini-embedding-001 sigue disponible y es el que da esa semantica
+  # 1 string -> 1 vector. output_dimensionality=768 en la request debe
+  # coincidir con EMBEDDING_DIM en la migracion e1a2b3c4d5f6.
+  - model_name: gemini-embedding
+    litellm_params:
+      model: gemini/gemini-embedding-001
+      api_key: os.environ/GEMINI_API_KEY
+      # El SDK de OpenAI manda encoding_format="base64" por defecto en
+      # todo /embeddings; Gemini no tiene ese concepto y LiteLLM
+      # devuelve 400 en vez de traducirlo. Alcance del deployment, no
+      # global, para no esconder parametros no soportados en otras
+      # llamadas (chat) donde si nos interesaria que fallen fuerte.
+      drop_params: true
+
+router_settings:
+  # Si el modelo pedido falla, prueba estos en orden. Gemini primero
+  # porque es el único proveedor con créditos disponibles ahora mismo;
+  # cambiar el orden de prioridad se hace acá, en un solo lugar.
+  #
+  # claude-sonnet-5 (el tier caro, para consultas complejas/sensibles)
+  # NO caía a nada -- "No fallback model group found for original
+  # model_group=claude-sonnet-5" -- así que un Anthropic sin crédito
+  # tumbaba directo cualquier conversación que ModelRouter clasificara
+  # como compleja. Su fallback NO empieza en claude-haiku-4-5: ambos
+  # comparten la misma ANTHROPIC_API_KEY, así que si sonnet falla por
+  # crédito agotado, haiku falla exactamente igual -- gemini-3.6-flash
+  # (otro proveedor, con crédito confirmado) va primero.
+  fallbacks:
+    - gemini-3.6-flash: ["gpt-5.6-luna", "claude-haiku-4-5"]
+    - claude-sonnet-5: ["gemini-3.6-flash", "gpt-5.6-luna"]
+    # El par barato/caro temporal (ver el comentario arriba en
+    # model_list) cae primero en su propio hermano flash-lite antes de
+    # escalar a otro proveedor -- Google limita el RPM por modelo, no
+    # por cuenta, asi que un 429 en uno no implica que el otro tambien
+    # este agotado. Es fallback "gratis" (mismo GEMINI_API_KEY, sin
+    # tocar OpenAI/Anthropic) antes de caer a los proveedores sin credito.
+    - gemini-3.5-flash-lite: ["gemini-3.1-flash-lite", "gemini-3.6-flash", "gpt-5.6-luna"]
+    - gemini-3.1-flash-lite: ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gpt-5.6-luna"]
+  num_retries: 2
+  cooldown_time: 60
+
+litellm_settings:
+  callbacks: ["langfuse_otel"]
+
+general_settings:
+  # No se guardan secretos en este archivo: Docker los inyecta desde .env.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

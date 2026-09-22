@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:16
+    # pgvector/pgvector:pg16 es un drop-in de postgres:16 con la
+    # extension "vector" ya compilada -- la necesita el modulo RAG
+    # (embeddings de la KB) via CREATE EXTENSION vector en migrations.
+    image: pgvector/pgvector:pg16
     restart: always
     environment:
       POSTGRES_USER: postgres
@@ -17,14 +20,15 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/
+      - redis_data:/data
       
 
   litellm:
     # IMPORTANT: pin the version explicitly. A supply-chain incident
-    # affected 1.82.7 and 1.82.8 (March 2026) -- those were pulled
-    # and 1.83.0 shipped clean. Never use `:latest` in a real deploy.
-    image: docker.litellm.ai/berriai/litellm:1.83.0
+    # affected 1.82.7 and 1.82.8 (March 2026). Version 1.83.0 was
+    # not a verifiable GitHub release, so use the first verified patch
+    # line available here instead. Never use `:latest`.
+    image: ghcr.io/berriai/litellm:v1.83.10-stable
     restart: unless-stopped
     ports:
       - "4000:4000"
@@ -35,6 +39,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}
+      - LANGFUSE_OTEL_HOST=${LANGFUSE_OTEL_HOST}
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml"]
