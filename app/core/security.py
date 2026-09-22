@@ -8,17 +8,28 @@ import secrets
 # --- Password hashing ---
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import VerifyMismatchError, InvalidHashError
 
 ph = PasswordHasher()  # usa los defaults recomendados por OWASP
 
 def hash_password(password: str) -> str:
     return ph.hash(password)
 
+
+def generate_temporary_password() -> str:
+    """Contraseña temporal para cuentas creadas por un admin/owner (o
+    por la tool create_user del agente de chat) -- nunca una
+    contraseña elegida a mano ni compartida entre usuarios. Se muestra
+    en texto plano una sola vez, en la respuesta de esa misma llamada
+    (nunca se persiste ni se loguea en claro), y el usuario queda
+    obligado a cambiarla (User.must_change_password) antes de poder
+    usar el chat -- ver require_password_changed."""
+    return secrets.token_urlsafe(12)
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return ph.verify(hashed_password, plain_password)
-    except VerifyMismatchError:
+    except (VerifyMismatchError, InvalidHashError):
         return False
 
 
