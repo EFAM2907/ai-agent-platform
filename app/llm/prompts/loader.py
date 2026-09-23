@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 import re
 import yaml
 
@@ -11,6 +12,13 @@ class PromptTemplate:
     description: str
     system_prompt: str
     variables: list[str]
+    # Opcional: solo lo traen los prompts pensados para salida
+    # estructurada (ej. clasificadores), para pasarlo directo a
+    # LLMRequest.response_schema. Los prompts de puro texto (como
+    # classify_ticket/v1.yaml) no lo definen -- por eso default None,
+    # no un dict vacío, que sí activaría el loop de reparación de
+    # LLMClient contra un schema sin sentido.
+    response_schema: dict[str, Any] | None = None
 
     def render(self, **kwargs) -> str:
         missing = [v for v in self.variables if v not in kwargs]
@@ -59,4 +67,5 @@ class PromptLoader:
             description=data["description"],
             system_prompt=data["system_prompt"],
             variables=data.get("variables", []),
+            response_schema=data.get("response_schema"),
         )

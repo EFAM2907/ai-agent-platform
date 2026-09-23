@@ -8,7 +8,7 @@ from app.core.dependencies import can_manage_other_user, get_current_user, requi
 from app.users.exceptions import UserAlreadyExistsError, UserNotFoundError
 from app.users.models import User, UserRole
 from app.users.repository import UserRepository
-from app.users.schemas import UserCreate, UserResponse, UserRoleUpdate, UserUpdate, OwnershipTransfer
+from app.users.schemas import UserCreate, UserInviteResponse, UserResponse, UserRoleUpdate, UserUpdate, OwnershipTransfer
 from app.users.service import UserService
 from app.core.rate_limit import rate_limit
 
@@ -20,12 +20,34 @@ def get_user_service(session: AsyncSession = Depends(get_db)) -> UserService:
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(rate_limit)])
 
 
-@router.post("/", response_model=UserResponse, status_code=201)
+@router.post("/", response_model=UserInviteResponse, status_code=201)
 async def create_user(data: UserCreate, service: UserService = Depends(get_user_service), admin: User = Depends(require_admin)):
+    # Mismas reglas que PATCH /{user_id}/role: nunca se crea un OWNER
+    # por esta via (existe el flujo dedicado de ownership transfer), y
+    # un ADMIN no puede crear pares ADMIN (solo OWNER crea ADMIN).
+    if data.role == UserRole.OWNER:
+        raise HTTPException(status_code=400, detail="Cannot create a user with OWNER role")
+    if admin.role == UserRole.ADMIN and data.role == UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admins can only create users below ADMIN")
     try:
-        return await service.create(admin, data)
+        user, temporary_password = await service.create(admin, data)
     except UserAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    return UserInviteResponse(
+        **UserResponse.model_validate(user).model_dump(),
+        temporary_password=temporary_password,
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_my_profile(current_user: User = Depends(get_current_user)):
+    # Declarado ANTES de /{user_id} a proposito: FastAPI matchea rutas
+    # en el orden en que se declaran, y {user_id}: uuid.UUID intentaria
+    # parsear "me" como UUID (422) si esta ruta fuera despues. El
+    # frontend ya llama a esto (api.ts getCurrentUser) para resolver
+    # nombre/rol del usuario logueado sin tener que decodificar el JWT
+    # en el cliente.
+    return current_user
 
 
 @router.get("/{user_id}", response_model=UserResponse)

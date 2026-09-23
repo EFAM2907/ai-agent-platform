@@ -3,42 +3,40 @@ LLMClient: la única fachada que el resto de la app debe usar.
 
 Nadie fuera de app/llm/ debe importar un provider concreto
 (OpenAIProvider, etc.) directamente. Todo pasa por aquí, para que
-routing, retries, fallback y salida estructurada entre proveedores
-sean invisibles para RAG, agentes y orquestador.
+routing, fallback y salida estructurada entre proveedores sean
+invisibles para RAG, agentes y orquestador.
+
+División de responsabilidades sobre retries (deliberada, no un
+descuido): los reintentos técnicos ante un proveedor (429, 5xx,
+timeout transitorio) son responsabilidad de LiteLLM
+(router_settings.num_retries en litellm_config.yaml), NUNCA de esta
+clase. Antes este cliente reintentaba TAMBIÉN esos mismos errores por
+su cuenta -- lo que significaba, bajo rate-limit sostenido, hasta
+app_retries × litellm_retries llamadas reales al proveedor para una
+sola generación, con su propio backoff exponencial encima del de
+LiteLLM. Eso fue justo lo que convirtió una consulta simple en ~160s
+de espera en producción. LLMClient ahora solo se ocupa de lo que
+LiteLLM no puede resolver por sí solo: reparar una salida estructurada
+que no cumple el schema pedido (que requiere cambiar el prompt, no
+repetir la misma solicitud).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
-import random
 
 import jsonschema
 
 from app.llm.base import LLMProvider
-from app.llm.cost_logger import CostLogger
-from app.llm.tracing import LangfuseTracer
-from app.llm.errors import (
-    InvalidResponseError,
-    LLMError,
-    ProviderError,
-    RateLimitError,
-)
-from app.llm.errors import TimeoutError_ as LLMTimeoutError
+from app.llm.errors import InvalidResponseError
 from app.llm.schemas import LLMRequest, LLMResponse, Message, Role
 from app.llm.streaming import StreamUsageCollector
 
-# Errores que vale la pena reintentar: son transitorios por naturaleza.
-# ContentFilterError e InvalidResponseError NO están aquí a propósito:
-# reintentar una respuesta bloqueada por contenido o mal formada no
-# la va a arreglar por sí sola sin un prompt distinto (ver el loop de
-# reparación de salida estructurada más abajo, que sí cambia el prompt).
-_RETRYABLE_ERRORS = (RateLimitError, LLMTimeoutError, ProviderError)
-
 
 class LLMClient:
-    """Fachada con retries+backoff/jitter y reparación de salida
-    estructurada sobre un LLMProvider.
+    """Fachada con reparación de salida estructurada sobre un
+    LLMProvider -- los retries técnicos ante el proveedor son
+    responsabilidad de LiteLLM, ver el docstring del módulo.
 
     El loop de reparación vive aquí, no en cada provider, porque es
     independiente de si el proveedor soporta JSON mode/function
@@ -51,20 +49,10 @@ class LLMClient:
         self,
         provider: LLMProvider,
         *,
-        max_retries: int = 3,
-        base_delay_seconds: float = 1.0,
-        max_delay_seconds: float = 20.0,
         max_structured_repair_attempts: int = 2,
-        cost_logger: CostLogger | None = None,
-        tracer: LangfuseTracer | None = None,
     ) -> None:
         self._provider = provider
-        self._max_retries = max_retries
-        self._base_delay_seconds = base_delay_seconds
-        self._max_delay_seconds = max_delay_seconds
         self._max_structured_repair_attempts = max_structured_repair_attempts
-        self._cost_logger = cost_logger
-        self._tracer = tracer
 
     @property
     def provider_name(self) -> str:
@@ -74,61 +62,45 @@ class LLMClient:
         return self._provider.name
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
-        response = await self._generate_with_retries(request)
+        response = await self._provider.generate(request)
 
         if request.response_schema is not None:
             response = await self._ensure_structured_output(request, response)
 
         return response
 
-    async def generate_stream(self, request: LLMRequest):
+    async def generate_stream(
+        self, request: LLMRequest, collector: StreamUsageCollector | None = None
+    ):
         """Streams text deltas directly from the provider, for live
         display (SSE) instead of waiting for the full response.
 
-        Deliberately NOT wrapped in retries or the structured-output
-        repair loop: retrying a stream mid-flight would mean the
-        caller sees a partial answer, then a second one starting
-        over -- confusing and hard to render correctly on the
-        frontend. And repairing structured output requires the full
-        response before you can even attempt to parse it, which
-        defeats the purpose of streaming. Use generate() instead when
-        you need either of those guarantees; use generate_stream()
-        only for plain conversational text meant to be shown live.
+        Deliberately NOT wrapped in the structured-output repair loop:
+        repairing requires the full response before you can even
+        attempt to parse it, which defeats the purpose of streaming.
+        Use generate() instead when you need that guarantee; use
+        generate_stream() only for plain conversational text (or text
+        plus tool_calls, see `collector`) meant to be shown live.
 
-        Cost logging and Langfuse tracing still happen here, but only
-        AFTER the stream ends -- usage totals aren't known mid-flight.
-        If the provider couldn't report final usage (best-effort),
-        nothing gets logged for this call rather than logging zeros.
+        collector: optional StreamUsageCollector -- if passed, filled
+        with the aggregated LLMResponse (usage, finish_reason, and any
+        tool_calls the model requested) once the stream ends, without
+        changing what gets yielded. See app.llm.tools.run_streaming_tool_loop
+        for how this lets a caller detect and execute tool_calls on a
+        streamed turn instead of only on generate().
+
+        Cost y tracing no se manejan acá: el gateway LiteLLM los
+        registra nativamente (ver litellm_config.yaml) para cada
+        request que pasa por el proxy, sin que la app necesite
+        acumular uso ni abrir observaciones propias.
         """
         if not self._provider.supports_streaming():
             raise NotImplementedError(
                 f"El provider '{self.provider_name}' no soporta streaming"
             )
 
-        generation = (
-            self._tracer.start_generation(request, self.provider_name)
-            if self._tracer is not None
-            else None
-        )
-        collector = StreamUsageCollector()
-
-        try:
-            async for chunk in self._provider.generate_stream(request, collector):
-                yield chunk
-        except Exception as exc:
-            if generation is not None:
-                self._tracer.end_generation_error(generation, exc)
-            raise
-
-        if collector.final_response is not None:
-            if generation is not None:
-                self._tracer.end_generation_success(generation, collector.final_response)
-            self._log_cost(request, collector.final_response)
-        elif generation is not None:
-            # No se pudo obtener el uso real -- cerramos la traza de
-            # todos modos para que no quede "abierta" para siempre en
-            # el dashboard de Langfuse.
-            generation.end()
+        async for chunk in self._provider.generate_stream(request, collector=collector):
+            yield chunk
 
     async def complete(
         self,
@@ -161,69 +133,6 @@ class LLMClient:
         )
         return await self.generate(request)
 
-    # -- Reintentos por fallos transitorios ---------------------------------
-
-    async def _generate_with_retries(self, request: LLMRequest) -> LLMResponse:
-        last_error: LLMError | None = None
-
-        for attempt in range(self._max_retries + 1):
-            generation = (
-                self._tracer.start_generation(request, self.provider_name)
-                if self._tracer is not None
-                else None
-            )
-
-            try:
-                response = await self._provider.generate(request)
-            except _RETRYABLE_ERRORS as exc:
-                last_error = exc
-
-                if generation is not None:
-                    self._tracer.end_generation_error(generation, exc)
-
-                if attempt == self._max_retries:
-                    break
-
-                delay = self._compute_delay(exc, attempt)
-                await asyncio.sleep(delay)
-                continue
-
-            if generation is not None:
-                self._tracer.end_generation_success(generation, response)
-
-            self._log_cost(request, response)
-            return response
-
-        assert last_error is not None
-        raise last_error
-
-    def _log_cost(self, request: LLMRequest, response: LLMResponse) -> None:
-        """Registra cada llamada real al proveedor que tuvo éxito --
-        incluidas las del loop de reparación, porque también
-        consumen tokens aunque el JSON haya salido inválido. No hace
-        nada si no se inyectó un CostLogger (uso opcional, por
-        ejemplo en tests)."""
-        if self._cost_logger is None:
-            return
-
-        self._cost_logger.log(
-            response,
-            tenant_id=request.tenant_id,
-            request_tag=request.request_tag,
-        )
-
-    def _compute_delay(self, error: LLMError, attempt: int) -> float:
-        """Backoff exponencial con jitter completo, respetando
-        retry_after del proveedor cuando existe (ej. 429 con header)."""
-        if isinstance(error, RateLimitError) and error.retry_after is not None:
-            return error.retry_after
-
-        exponential = min(
-            self._base_delay_seconds * (2**attempt),
-            self._max_delay_seconds,
-        )
-        return random.uniform(0, exponential)
-
     # -- Loop de reparación de salida estructurada ---------------------------
 
     async def _ensure_structured_output(
@@ -254,7 +163,7 @@ class LLMClient:
                 current_request = self._build_repair_request(
                     current_request, current_response.content, last_error_message
                 )
-                current_response = await self._generate_with_retries(current_request)
+                current_response = await self._provider.generate(current_request)
                 continue
 
             current_response.parsed = parsed

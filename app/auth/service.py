@@ -1,3 +1,5 @@
+from fastapi import BackgroundTasks
+
 from app.core.security import verify_password, create_access_token, generate_refresh_token,hash_refresh_token, hash_password
 from app.core.exceptions import InvalidCredentialsError,InvalidTokenError
 from app.users.exceptions import UserAlreadyExistsError
@@ -10,6 +12,7 @@ from app.auth.repository import RefreshTokenRepository
 from app.users.repository import UserRepository
 from app.organizations.repository import OrganizationRepository
 from app.organizations.schemas import OrganizationBootstrap
+from app.organizations.service import provision_llm_key_in_background
 from app.users.models import User, UserRole
 
 
@@ -24,7 +27,7 @@ class AuthService:
 
 
 
-    async def register(self, data: OrganizationBootstrap) -> dict:
+    async def register(self, data: OrganizationBootstrap, background_tasks: BackgroundTasks) -> dict:
         existing_org = await self.organization_repository.get_by_tax_id(data.tax_id)
         if existing_org is not None:
             raise DuplicateTaxIdError(data.tax_id)
@@ -47,7 +50,13 @@ class AuthService:
         self.session.add(owner)
         await self.session.flush()
 
-        return await self._issue_token_pair(owner)
+        tokens = await self._issue_token_pair(owner)  # hace commit
+
+        # Encolada DESPUÉS del commit (dentro de _issue_token_pair),
+        # nunca antes -- ver provision_llm_key_in_background para el
+        # manejo de errores, que nunca debe afectar esta respuesta.
+        background_tasks.add_task(provision_llm_key_in_background, organization.id)
+        return tokens
     async def login(self, credentials: LoginRequest) -> dict:
         user = await self.repository.get_by_email(credentials.email)
         if user is None or user.deleted_at is not None:
@@ -77,6 +86,32 @@ class AuthService:
         await self.refresh_repository.revoke(stored_token)
         return await self._issue_token_pair(user)
 
+    async def change_password(self, user: User, new_password: str) -> None:
+        """Unica ruta que apaga must_change_password -- ver
+        POST /auth/change-password. No revoca refresh tokens existentes
+        al cambiar la contraseña (gap conocido, no cerrado aca: un
+        token ya emitido sigue valido hasta que expire o se revoque
+        aparte)."""
+        await self.repository.update(
+            user,
+            {
+                "hashed_password": hash_password(new_password),
+                "must_change_password": False,
+            },
+        )
+        await self.session.commit()
+
+    async def logout(self, raw_refresh_token: str) -> None:
+        token_hash = hash_refresh_token(raw_refresh_token)
+        stored_token = await self.refresh_repository.get_by_hash(token_hash)
+
+        # Idempotente a proposito: un token invalido o ya revocado no
+        # es un error para el usuario, el resultado que le importa
+        # (quedar deslogueado) ya se cumple.
+        if stored_token is not None and stored_token.revoked_at is None:
+            await self.refresh_repository.revoke(stored_token)
+            await self.session.commit()
+
     async def _issue_token_pair(self, user) -> dict:
         access_token = create_access_token({
             "sub": str(user.id),
@@ -94,6 +129,7 @@ class AuthService:
             "access_token": access_token,
             "refresh_token": raw_refresh_token,
             "token_type": "bearer",
+            "must_change_password": user.must_change_password,
         }
         
         

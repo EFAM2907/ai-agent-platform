@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_owner
+from app.core.dependencies import get_current_user, require_admin, require_owner
+from app.llm.errors import TenantVirtualKeyError
 from app.organizations.exceptions import DuplicateTaxIdError
 from app.organizations.repository import OrganizationRepository
 from app.organizations.schemas import OrganizationBootstrap, OrganizationResponse, OrganizationUpdate
@@ -24,9 +25,13 @@ router = APIRouter(prefix="/organizations", tags=["organizations"], dependencies
 
 
 @router.post("/", response_model=OrganizationResponse, status_code=201)
-async def create_organization(data: OrganizationBootstrap, service: OrganizationService = Depends(get_organization_service)):
+async def create_organization(
+    data: OrganizationBootstrap,
+    background_tasks: BackgroundTasks,
+    service: OrganizationService = Depends(get_organization_service),
+):
     try:
-        return await service.create_with_owner(data)
+        return await service.create_with_owner(data, background_tasks)
     except DuplicateTaxIdError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except UserAlreadyExistsError as exc:
@@ -62,6 +67,32 @@ async def delete_organization(organization_id: uuid.UUID, service: OrganizationS
     organization = await service.delete(organization_id)
     if organization is None or organization.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+
+@router.post("/{organization_id}/provision-llm-key", response_model=OrganizationResponse)
+async def provision_llm_key(
+    organization_id: uuid.UUID,
+    service: OrganizationService = Depends(get_organization_service),
+    current_user: User = Depends(get_current_user),
+):
+    organization = await service.get_by_id(organization_id)
+    if organization is None or organization.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if not current_user.is_platform_admin:
+        if current_user.organization_id != organization_id:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        await require_admin(current_user)
+
+    try:
+        provisioned = await service.provision_llm_key(organization_id)
+    except TenantVirtualKeyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo aprovisionar la virtual key en LiteLLM: {exc}",
+        )
+    assert provisioned is not None
+    return provisioned
 
 
 @router.get("/", response_model=list[OrganizationResponse])

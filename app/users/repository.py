@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.users.models import User
+from app.users.models import User, UserRole
 from app.users.schemas import UserCreate
 from sqlalchemy import select
 from datetime import datetime, timezone
@@ -14,7 +14,9 @@ class UserRepository:
             email=data["email"],
             hashed_password=data["hashed_password"],
             full_name=data["full_name"],
-            organization_id=admin.organization_id
+            organization_id=admin.organization_id,
+            role=data.get("role", UserRole.MEMBER),
+            must_change_password=data.get("must_change_password", False),
         )
         self.session.add(user)
         await self.session.flush()

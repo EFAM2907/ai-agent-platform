@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.users.repository import UserRepository
 from app.users.schemas import UserCreate, UserUpdate
 from app.users.models import User, UserRole
-from app.core.security import hash_password
+from app.core.security import generate_temporary_password, hash_password
 from app.users.exceptions import UserAlreadyExistsError, UserNotFoundError
 import uuid
 
@@ -10,19 +10,32 @@ class UserService:
     def __init__(self, repository: UserRepository, session: AsyncSession):
         self.repository = repository
         self.session = session
-        
-    async def create(self, admin: User, data: UserCreate) -> User:
+
+    async def create(self, admin: User, data: UserCreate) -> tuple[User, str]:
+        """Crea un usuario invitado por `admin` con una contraseña
+        temporal generada (nunca una elegida por quien invita) --
+        devuelve (user, contraseña_en_claro) porque esa es la unica
+        oportunidad de verla: no se persiste en claro y no se puede
+        recuperar despues. Quien llama (la API o la tool create_user)
+        ya valido que `admin` puede asignar `data.role` antes de
+        llegar aca -- este metodo no vuelve a chequear jerarquia de
+        roles, igual que el resto de UserService."""
         if data.email:
             user = await self.repository.get_by_email(data.email)
             if user:
                 raise UserAlreadyExistsError(data.email)
-        data_dict = data.model_dump()
-        if "password" in data_dict:
-             plain_password = data_dict.pop("password")
-             data_dict["hashed_password"] = hash_password(plain_password)
-        new_user = await self.repository.create(admin,data_dict)
+
+        plain_password = generate_temporary_password()
+        data_dict = {
+            "email": data.email,
+            "full_name": data.full_name,
+            "role": data.role,
+            "hashed_password": hash_password(plain_password),
+            "must_change_password": True,
+        }
+        new_user = await self.repository.create(admin, data_dict)
         await self.session.commit()
-        return new_user
+        return new_user, plain_password
 
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         return await self.repository.get_by_id(user_id)
