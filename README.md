@@ -1,8 +1,7 @@
 # AI Agent Platform
 
 Plataforma multi-tenant de agente de IA con tool-calling, RAG y gestión de
-usuarios/envíos. Proyecto de portafolio para entrevistas Junior/Mid AI
-Engineer. Tenant de referencia: **Inter Rapidísimo** (mensajería/logística).
+usuarios/envíos.Tenant de referencia: **Inter Rapidísimo** (mensajería/logística).
 
 ## Qué hace
 
