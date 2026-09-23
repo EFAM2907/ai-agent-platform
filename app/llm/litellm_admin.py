@@ -1,7 +1,7 @@
 """Operaciones admin contra el LiteLLM Proxy.
 
 Todo lo que autentica con settings.litellm_master_key vive acá, y en
-ningún otro lado: el tráfico real de chat (app.llm.providers.litellm_provider)
+ningún otro lado: el tráfico real de chat (app.llm.litellmprovider.litellm_provider)
 solo acepta virtual keys, nunca la master key. Este módulo es la única
 excepción reconocida a esa regla, porque generar/administrar virtual
 keys es en sí mismo un llamado admin, no tráfico de chat.
