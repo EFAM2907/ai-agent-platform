@@ -30,12 +30,10 @@ fallo de envio -- gmail_service es una mejora, no un requisito.
 
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import Any
 
-from app.gmail.errors import GmailError
-from app.gmail.outbound import render_user_invite_email
+from app.gmail.outbound import send_user_invite_email
 from app.gmail.service import GmailConnectionService
 from app.llm.schemas import ToolDefinition
 from app.llm.tools import Tool
@@ -43,8 +41,6 @@ from app.users.exceptions import UserAlreadyExistsError
 from app.users.models import ROLE_HIERARCHY, User, UserRole
 from app.users.schemas import UserCreate, UserUpdate
 from app.users.service import UserService
-
-logger = logging.getLogger(__name__)
 
 
 def _verify_same_organization(actor: User, target_organization_id: uuid.UUID) -> None:
@@ -122,23 +118,14 @@ def build_user_management_tools(
 
         result = _serialize(new_user)
         if gmail_service is not None:
-            subject, body = render_user_invite_email(
+            sent = await send_user_invite_email(
+                gmail_service,
+                actor.organization_id,
                 full_name=new_user.full_name,
                 email=new_user.email,
                 temporary_password=temporary_password,
             )
-            try:
-                await gmail_service.send_email(
-                    actor.organization_id, to_email=new_user.email, subject=subject, body=body
-                )
-            except GmailError:
-                logger.warning(
-                    "No se pudo enviar la invitacion por correo al usuario %s; "
-                    "se muestra la contraseña en el resultado en su lugar",
-                    new_user.id,
-                    exc_info=True,
-                )
-            else:
+            if sent:
                 result["note"] = (
                     f"La contraseña temporal se envió por correo a {new_user.email}. "
                     "No se muestra aquí por seguridad; el usuario debe revisar su "

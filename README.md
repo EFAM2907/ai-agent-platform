@@ -1,7 +1,7 @@
 # AI Agent Platform
 
 Plataforma multi-tenant de agente de IA con tool-calling, RAG y gestión de
-usuarios/envíos.Tenant de referencia: **Inter Rapidísimo** (mensajería/logística).
+usuarios/envíos. Tenant de referencia: **Inter Rapidísimo** (mensajería/logística).
 
 ## Qué hace
 
@@ -98,9 +98,6 @@ pytest
   en vez de un modelo de pago, porque Anthropic/OpenAI todavía no tienen
   crédito real — marcado explícitamente como `# TEMPORAL` en
   `app/chat/service.py` y `litellm_config.yaml`.
-- El correo de bienvenida al crear un usuario hoy solo se envía desde la
-  tool de chat `create_user`, no desde el endpoint REST `POST /users/`
-  (pendiente decidir si se unifica).
 - El poller de Gmail (`scripts/run_gmail_poller.py`) se corre manualmente
   (o vía el Programador de tareas de Windows) en vez de como servicio de
   Docker: una imagen nueva solo para esto pesaría ~400-600MB sin nada que

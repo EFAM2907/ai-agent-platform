@@ -211,7 +211,7 @@ Cliente HTTP async — usado tanto por los tests (`AsyncClient` contra la app) c
 ## 10. Resumen de flujos y capacidades actuales
 
 1. **Bootstrap de organización** (`POST /organizations/`): crea `Organization` + su primer `OWNER` de forma atómica, dispara aprovisionamiento de virtual key de LiteLLM en background.
-2. **Invitación de usuarios** (`POST /users/`, o la tool `create_user` desde el chat): quien invita **nunca** elige la contraseña — se genera una temporal (`must_change_password=True`), devuelta una única vez en la respuesta.
+2. **Invitación de usuarios** (`POST /users/`, o la tool `create_user` desde el chat): quien invita **nunca** elige la contraseña — se genera una temporal (`must_change_password=True`). Si la organización tiene Gmail conectado, esa contraseña se manda por correo al usuario nuevo y nunca aparece en la respuesta (`password_sent_by_email=true`, `temporary_password=null`); si no hay Gmail conectado, o el envío falla por lo que sea, se devuelve en texto plano una única vez, como antes. Los dos caminos (REST y chat) comparten exactamente la misma lógica de envío (`app.gmail.outbound.send_user_invite_email`), así que se comportan igual.
 3. **Login / refresh / logout / cambio de contraseña** (`POST /auth/login|refresh|logout|change-password`): JWT de acceso + refresh token de 30 días hasheado; `change-password` es la única ruta que apaga `must_change_password`.
 4. **RBAC y aislamiento multi-tenant** en cada operación sobre usuarios/organizaciones: jerarquía de roles (`OWNER > ADMIN > MEMBER > VIEWER`), aislamiento por `organization_id` con bypass explícito solo para `is_platform_admin`.
 5. **Transferencia de propiedad** (`POST /organizations/{id}/transfer-ownership`): swap atómico de roles con bloqueo de filas.

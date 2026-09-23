@@ -43,9 +43,16 @@ class UserInviteResponse(UserResponse):
     plano -- se devuelve UNA sola vez, en la respuesta de este mismo
     request de creacion. No se puede recuperar despues (no se persiste
     en claro); si se pierde, la unica salida es que el usuario cambie
-    su contraseña o un admin lo vuelva a invitar."""
+    su contraseña o un admin lo vuelva a invitar.
 
-    temporary_password: str
+    temporary_password es None cuando password_sent_by_email es True
+    (ver app.gmail.outbound.send_user_invite_email): si Gmail esta
+    conectado para la organizacion y el envio no fallo, la contraseña
+    viaja solo por correo, nunca en esta respuesta -- misma logica que
+    ya aplicaba la tool de chat create_user, ahora tambien aca."""
+
+    temporary_password: str | None = None
+    password_sent_by_email: bool = False
 
 
 

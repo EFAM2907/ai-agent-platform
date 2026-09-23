@@ -13,8 +13,18 @@ con margen de interpretacion (ni exponer a un prompt).
 from __future__ import annotations
 
 import base64
+import logging
 import re
+import uuid
 from email.message import EmailMessage
+from typing import TYPE_CHECKING
+
+from app.gmail.errors import GmailError
+
+if TYPE_CHECKING:
+    from app.gmail.service import GmailConnectionService
+
+logger = logging.getLogger(__name__)
 
 _MAX_SUBJECT_CHARS = 200
 
@@ -51,3 +61,41 @@ def render_user_invite_email(
         "Saludos cordiales."
     )
     return subject, body
+
+
+async def send_user_invite_email(
+    gmail_service: "GmailConnectionService",
+    organization_id: uuid.UUID,
+    *,
+    full_name: str,
+    email: str,
+    temporary_password: str,
+) -> bool:
+    """Arma y envía el correo de bienvenida con la contraseña temporal
+    al buzón de Gmail conectado de la organización. Devuelve True si
+    se envió, False si Gmail no está conectado o el envío falla por
+    cualquier motivo (GmailError y sus subclases) -- nunca deja que un
+    problema de correo bloquee la creación del usuario, quien llama
+    decide el fallback (normalmente: mostrar la contraseña en la
+    respuesta en vez de por correo).
+
+    Compartido entre la tool de chat create_user (app.users.tools) y
+    el endpoint REST POST /users/ (app.users.api), para que ambos
+    caminos de creación de usuario se comporten exactamente igual en
+    vez de que solo uno de los dos mande el correo."""
+    subject, body = render_user_invite_email(
+        full_name=full_name, email=email, temporary_password=temporary_password
+    )
+    try:
+        await gmail_service.send_email(
+            organization_id, to_email=email, subject=subject, body=body
+        )
+    except GmailError:
+        logger.warning(
+            "No se pudo enviar la invitación por correo a %s; se devuelve "
+            "la contraseña en la respuesta en su lugar",
+            email,
+            exc_info=True,
+        )
+        return False
+    return True
