@@ -102,10 +102,12 @@ pytest
 - El correo de bienvenida al crear un usuario hoy solo se envía desde la
   tool de chat `create_user`, no desde el endpoint REST `POST /users/`
   (pendiente decidir si se unifica).
-- Todavía no hay UI en el frontend para conectar/gestionar Gmail (la
-  integración funciona completa vía API).
-- El poller de Gmail (`scripts/run_gmail_poller.py`) se corre manualmente;
-  no está integrado en `docker-compose.yml` todavía.
+- El poller de Gmail (`scripts/run_gmail_poller.py`) se corre manualmente
+  (o vía el Programador de tareas de Windows) en vez de como servicio de
+  Docker: una imagen nueva solo para esto pesaría ~400-600MB sin nada que
+  la comparta, ya que el backend tampoco está containerizado. El botón
+  "Revisar ahora" del panel de Gmail en el frontend cubre poder probar la
+  integración sin depender de ese proceso en background.
 
 Lista completa de pendientes y decisiones de diseño:
 [`docs/dependecies.md`](docs/dependecies.md#12-pendientes-conocidos).
