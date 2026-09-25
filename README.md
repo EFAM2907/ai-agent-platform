@@ -107,3 +107,6 @@ pytest
 
 Lista completa de pendientes y decisiones de diseño:
 [`docs/dependecies.md`](docs/dependecies.md#12-pendientes-conocidos).
+
+Mejoras de arquitectura recomendadas en el review con el senior (nada
+de esto implementado todavía): [`docs/roadmap.md`](docs/roadmap.md).
