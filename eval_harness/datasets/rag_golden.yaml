@@ -1,0 +1,79 @@
+# Dataset golden para eval_harness/rag_eval.py -- preguntas reales
+# sobre la KB de kb_content/inter_rapidisimo/ con el/los titulos de
+# articulo que deberian aparecer entre los chunks recuperados.
+# expected_titles es una lista porque algunas preguntas cruzan mas de
+# un articulo a proposito (ver 03-paquetes-danados.md referenciando a
+# indemnizaciones.md, o retrasos.md/paquetes_perdidos.md entre si) --
+# mismo principio que model_routing_golden.yaml, pero para RAG.
+#
+# IMPORTANTE: antes de correr el eval, la organizacion pasada como
+# argumento debe tener esta KB ya ingestada -- ver
+# "python -m scripts.ingest_kb_articles <organization_id> --dir inter_rapidisimo".
+
+- id: estados_01
+  query: "¿Qué significa que mi paquete esté en bodega destino?"
+  expected_titles:
+    - "Consulta y Estados de un Envío"
+
+- id: estados_02
+  query: >
+    Cuando un cliente pregunta dónde está su paquete, ¿qué información
+    tiene que incluir siempre la respuesta además del estado actual?
+  expected_titles:
+    - "Consulta y Estados de un Envío"
+
+- id: retrasos_01
+  query: "¿Después de cuántos días hábiles sin movimiento se considera demorado un envío dentro de la misma ciudad?"
+  expected_titles:
+    - "Política de Envíos Demorados y Apertura de Investigación"
+
+- id: retrasos_02
+  query: "¿Hay que pedirle confirmación al cliente antes de abrir una investigación por demora?"
+  expected_titles:
+    - "Política de Envíos Demorados y Apertura de Investigación"
+
+- id: perdidos_01
+  query: "¿Cuándo se declara oficialmente perdido un envío?"
+  expected_titles:
+    - "Procedimiento para Envíos Perdidos"
+    - "Política de Envíos Demorados y Apertura de Investigación"
+
+- id: danos_01
+  query: "¿Qué debe hacer un cliente si su paquete llega dañado al momento de la entrega?"
+  expected_titles:
+    - "Procedimiento para Paquetes que Llegan Averiados"
+
+- id: danos_02
+  query: "Si bodega detecta el daño antes de repartir el paquete, ¿el cliente tiene que reportar algo?"
+  expected_titles:
+    - "Procedimiento para Paquetes que Llegan Averiados"
+
+- id: reclamaciones_01
+  query: "¿Cuánto tiempo tengo para presentar una reclamación después de que se admitió mi envío?"
+  expected_titles:
+    - "Cómo y Cuándo Presentar una Reclamación"
+
+- id: reclamaciones_02
+  query: "¿Qué tipos de reclamación existen en Inter Rapidísimo?"
+  expected_titles:
+    - "Cómo y Cuándo Presentar una Reclamación"
+
+- id: indemnizacion_01
+  query: "¿Cuánto me indemnizan si mi paquete se pierde y no tenía seguro contratado?"
+  expected_titles:
+    - "Política de Indemnización por Envíos Dañados, Perdidos o con Retraso Extremo"
+
+- id: indemnizacion_02
+  query: "¿Qué pasa si mi envío tiene un retraso extremo de más de 10 días pero no llega a declararse perdido?"
+  expected_titles:
+    - "Política de Indemnización por Envíos Dañados, Perdidos o con Retraso Extremo"
+
+- id: tarifas_01
+  query: "¿Cuáles son los tiempos de entrega estimados del servicio Express?"
+  expected_titles:
+    - "Tarifas y Tiempos de Entrega por Servicio"
+
+- id: servicios_01
+  query: "¿En qué consiste el servicio de recaudo contra entrega?"
+  expected_titles:
+    - "Portafolio de Servicios de Inter Rapidísimo"

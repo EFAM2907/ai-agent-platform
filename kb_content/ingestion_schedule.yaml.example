@@ -1,0 +1,11 @@
+# Plantilla para kb_content/ingestion_schedule.yaml -- copia este
+# archivo sin el ".example" y completa con los organization_id reales
+# de tu deployment (solo existen en tu base de datos, por eso esto no
+# se versiona con valores reales -- mismo principio que .env.example).
+#
+# Cada entrada es un par (organization_id, subcarpeta de kb_content/) que
+# scripts/run_kb_ingestion_scheduler.py ingesta periodicamente -- ver el
+# docstring de ese script para el modo --once (cron) vs. bucle continuo.
+#
+# - organization_id: "00000000-0000-0000-0000-000000000000"
+#   dir: inter_rapidisimo

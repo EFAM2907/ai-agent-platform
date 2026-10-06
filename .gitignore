@@ -4,6 +4,11 @@ venv/
 # Environment variables
 .env
 
+# Mapeo organization_id -> subcarpeta de kb_content/ para el scheduler
+# de ingestion del RAG -- especifico de cada deployment (ver
+# kb_content/ingestion_schedule.yaml.example).
+kb_content/ingestion_schedule.yaml
+
 # Python cache
 __pycache__/
 *.py[cod]
