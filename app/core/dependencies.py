@@ -43,6 +43,20 @@ async def get_current_user(
 
 
 
+async def get_bearer_token(
+    auth: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
+    """El JWT crudo del request, sin decodificar -- lo necesita
+    ChatService para abrir su sesion MCP contra mcp_server/ (ver
+    app.chat.mcp_tools.open_mcp_tools), que reenvia este mismo token a
+    la API REST en nombre del usuario, igual que ya hace cualquier otro
+    cliente MCP (ver mcp_server/server.py). Depends(security) ya quedo
+    cacheado por FastAPI dentro de este mismo request si la ruta
+    tambien depende de get_current_user -- no vuelve a parsear el
+    header Authorization dos veces."""
+    return auth.credentials
+
+
 async def require_admin(
     current_user: User = Depends(get_current_user)
 )-> User:

@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     litellm_base_url: str = "http://localhost:4000"
     litellm_master_key: str | None = None
+    # Servidor MCP propio (mcp_server/, puerto 8100 en docker-compose) --
+    # ChatService lo usa como cliente MCP para las tools de usuarios y
+    # envios (ver app.chat.mcp_tools), en vez de llamarlas in-process
+    # como antes (ver docs/roadmap.md seccion 2). "/mcp" es el path por
+    # defecto que expone FastMCP para transport="streamable-http".
+    mcp_server_url: str = "http://localhost:8100/mcp"
     # Virtual key acotada (budget bajo, un solo modelo barato) que
     # get_tenant_llm_client() usa cuando una organizacion todavia no
     # tiene su propia virtual key. Requerida a proposito (sin default):
@@ -77,6 +83,16 @@ class Settings(BaseSettings):
     langfuse_api_url: str | None = None
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
+    # Scheduler de kb_content/ (ver scripts/run_kb_ingestion_scheduler.py)
+    # -- antes la unica forma de (re)ingestar era correr
+    # scripts/ingest_kb_articles.py a mano. La ingesta es idempotente
+    # (RAGService.ingest_article hace upsert por (organization_id,
+    # titulo)), asi que correrla seguido no duplica nada. El intervalo
+    # es mucho mas largo que el de Gmail (gmail_poll_interval_seconds)
+    # porque el contenido de la KB cambia con poca frecuencia, no en
+    # tiempo real.
+    kb_ingestion_schedule_path: str = "kb_content/ingestion_schedule.yaml"
+    kb_ingestion_poll_interval_seconds: int = 3600
     
     @field_validator("gmail_tracking_bare_pattern")
     @classmethod

@@ -7,20 +7,16 @@ from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.chat.mcp_tools import open_mcp_tools
 from app.chat.models import ChatMessage, ChatSession, MessageRole
 from app.chat.repository import ChatRepository
-from app.gmail.service import GmailConnectionService
 from app.llm.client import LLMClient
 from app.llm.prompts.loader import PromptLoader
 from app.llm.routing import ModelRouter
 from app.llm.schemas import LLMRequest, Message, Role
-from app.llm.tools import Tool, ToolLoopError, run_streaming_tool_loop, run_tool_loop
+from app.llm.tools import ToolLoopError, run_streaming_tool_loop, run_tool_loop
 from app.rag.service import RAGService
-from app.shipments.service import ShipmentService
-from app.shipments.tools import build_shipment_tools
 from app.users.models import User
-from app.users.service import UserService
-from app.users.tools import build_user_management_tools
 
 logger = logging.getLogger(__name__)
 
@@ -84,22 +80,14 @@ class ChatService:
         llm_client: LLMClient,
         model_router: ModelRouter,
         session: AsyncSession,
-        user_service: UserService,
-        shipment_service: ShipmentService,
         prompt_loader: PromptLoader | None = None,
-        gmail_service: GmailConnectionService | None = None,
     ) -> None:
         self.repository = repository
         self.rag_service = rag_service
         self.llm_client = llm_client
         self.model_router = model_router
         self.session = session
-        self.user_service = user_service
-        self.shipment_service = shipment_service
         self.prompt_loader = prompt_loader or PromptLoader()
-        # Opcional: create_user cae a mostrar la contraseña en pantalla
-        # si no hay Gmail conectado -- ver app.users.tools.create_user.
-        self.gmail_service = gmail_service
 
     async def send_message(
         self,
@@ -107,22 +95,31 @@ class ChatService:
         current_user: User,
         message: str,
         session_id: uuid.UUID | None,
+        bearer_token: str,
     ) -> ChatMessage:
         """Guarda el mensaje del usuario, recupera contexto de la KB,
-        genera la respuesta del asistente (con tools de gestion de
-        usuarios y de consulta de envios/clientes disponibles, ver
-        app.users.tools y app.shipments.tools), la guarda, y devuelve
+        genera la respuesta del asistente (con las tools de gestion de
+        usuarios y de consulta de envios/clientes que anuncie el
+        servidor MCP, ver app.chat.mcp_tools), la guarda, y devuelve
         el ChatMessage del asistente ya persistido. Crea la sesion si
         session_id es None o no resuelve para este tenant --
         nunca falla por un session_id invalido, simplemente empieza una
-        conversacion nueva."""
-        chat_session, request, sources, tools = await self._prepare_turn(
+        conversacion nueva.
+
+        bearer_token es el JWT crudo de este request (ver
+        app.core.dependencies.get_bearer_token) -- se reenvia tal cual
+        al servidor MCP, que a su vez se lo reenvia a la API REST, para
+        que cada tool call corra con los mismos permisos que
+        current_user ya tiene, nunca con credenciales propias de este
+        servicio."""
+        chat_session, request, sources = await self._prepare_turn(
             organization_id, current_user, message, session_id
         )
 
-        response = await run_tool_loop(
-            self.llm_client, request, tools, max_iterations=_MAX_TOOL_ITERATIONS
-        )
+        async with open_mcp_tools(bearer_token) as tools:
+            response = await run_tool_loop(
+                self.llm_client, request, tools, max_iterations=_MAX_TOOL_ITERATIONS
+            )
         self._reject_empty_response(response.content, chat_session.id)
 
         assistant_message = await self.repository.add_message(
@@ -141,6 +138,7 @@ class ChatService:
         current_user: User,
         message: str,
         session_id: uuid.UUID | None,
+        bearer_token: str,
     ) -> AsyncIterator[dict]:
         """Misma logica de turno que send_message(), pero entregando la
         respuesta como una secuencia de eventos en vez de esperar el
@@ -156,8 +154,7 @@ class ChatService:
           - {"event": "error", "detail": "..."} (en vez de "done", si algo
             falla a mitad del stream)
 
-        Con tools habilitadas (ver app.users.tools y app.shipments.tools),
-        el texto sí sigue
+        Con tools habilitadas (ver app.chat.mcp_tools), el texto sí sigue
         saliendo token a token de verdad: run_streaming_tool_loop()
         resuelve cada llamada a tool con generate_stream() (no
         generate()), y solo ejecuta las tools entre vueltas -- la
@@ -166,14 +163,19 @@ class ChatService:
 
         Si falla a mitad de turno, el mensaje del usuario ya guardado
         en _prepare_turn() queda persistido igual (a diferencia del
-        comportamiento anterior) porque UserService confirma sus
-        propios cambios de inmediato si el LLM llego a ejecutar una
-        tool de mutacion (delete_user, update_user, etc.) -- esa accion
-        real ya ocurrio y no tendria sentido esconderla. Lo que sigue
-        sin persistir si falla es el mensaje ASSISTANT de esta funcion,
-        exactamente igual que antes.
+        comportamiento anterior) porque la API REST (del otro lado del
+        servidor MCP) confirma sus propios cambios de inmediato si el
+        LLM llego a ejecutar una tool de mutacion (delete_user,
+        update_user, etc.) -- esa accion real ya ocurrio y no tendria
+        sentido esconderla. Lo que sigue sin persistir si falla es el
+        mensaje ASSISTANT de esta funcion, exactamente igual que antes.
+
+        abrir la sesion MCP (open_mcp_tools) esta DENTRO del try de
+        abajo a proposito: si el servidor MCP no esta disponible, eso
+        debe llegar como el mismo evento SSE "error" que cualquier otra
+        falla a mitad de turno, no como un 500 crudo.
         """
-        chat_session, request, sources, tools = await self._prepare_turn(
+        chat_session, request, sources = await self._prepare_turn(
             organization_id, current_user, message, session_id
         )
 
@@ -185,11 +187,12 @@ class ChatService:
 
         accumulated: list[str] = []
         try:
-            async for delta in run_streaming_tool_loop(
-                self.llm_client, request, tools, max_iterations=_MAX_TOOL_ITERATIONS
-            ):
-                accumulated.append(delta)
-                yield {"event": "delta", "content": delta}
+            async with open_mcp_tools(bearer_token) as tools:
+                async for delta in run_streaming_tool_loop(
+                    self.llm_client, request, tools, max_iterations=_MAX_TOOL_ITERATIONS
+                ):
+                    accumulated.append(delta)
+                    yield {"event": "delta", "content": delta}
         except ToolLoopError:
             logger.exception(
                 "El modelo no convergio resolviendo tools para la sesion %s",
@@ -247,16 +250,16 @@ class ChatService:
         current_user: User,
         message: str,
         session_id: uuid.UUID | None,
-    ) -> tuple[ChatSession, LLMRequest, list[str], list[Tool]]:
+    ) -> tuple[ChatSession, LLMRequest, list[str]]:
         """Todo lo que send_message() y send_message_stream() necesitan
         antes de poder generar: resolver/crear la sesion, guardar el
-        mensaje del usuario, armar el LLMRequest, y las tools de
-        gestion de usuarios (cerradas sobre current_user) y de consulta
-        de envios/clientes (cerradas sobre organization_id) -- compartido
-        para que ambos caminos se beneficien igual de la eleccion de
-        modelo (ModelRouter), del control de reasoning_effort y de las
-        mismas reglas de autorizacion, en vez de que solo uno de los
-        dos quede optimizado o protegido."""
+        mensaje del usuario, y armar el LLMRequest -- compartido para
+        que ambos caminos se beneficien igual de la eleccion de modelo
+        (ModelRouter) y del control de reasoning_effort. Las tools NO
+        se arman aca: dependen de una sesion MCP abierta
+        (app.chat.mcp_tools.open_mcp_tools) que el caller abre el solo,
+        envolviendo el tool loop completo -- no tendria sentido abrirla
+        aca y cerrarla antes de que el loop la use."""
         chat_session = None
         if session_id is not None:
             chat_session = await self.repository.get_session(session_id, organization_id)
@@ -309,11 +312,7 @@ class ChatService:
             # la decision de routing que se acaba de tomar.
             reasoning_effort="none" if chosen_model == CHEAP_MODEL else None,
         )
-        tools = [
-            *build_user_management_tools(current_user, self.user_service, self.gmail_service),
-            *build_shipment_tools(current_user, self.shipment_service),
-        ]
-        return chat_session, request, sources, tools
+        return chat_session, request, sources
 
     @staticmethod
     def _reject_empty_response(content: str, session_id: uuid.UUID) -> None:

@@ -4,7 +4,7 @@ organizacion -- distintos del pipeline de respuestas de tracking
 son un correo nuevo que la propia app decide enviar.
 
 Hoy, el unico caso es la invitacion de create_user con la contraseña
-temporal (ver app.users.tools.create_user y
+temporal (ver app.users.api.create_user y
 GmailConnectionService.send_email). A diferencia de reply.py, el texto
 es fijo y sin LLM: es una credencial, no algo que valga la pena redactar
 con margen de interpretacion (ni exponer a un prompt).
@@ -79,10 +79,10 @@ async def send_user_invite_email(
     decide el fallback (normalmente: mostrar la contraseña en la
     respuesta en vez de por correo).
 
-    Compartido entre la tool de chat create_user (app.users.tools) y
-    el endpoint REST POST /users/ (app.users.api), para que ambos
-    caminos de creación de usuario se comporten exactamente igual en
-    vez de que solo uno de los dos mande el correo."""
+    Llamado desde el endpoint REST POST /users/ (app.users.api) --
+    tanto quien lo llama directo como la tool de chat create_user (que
+    hoy reenvia a este mismo endpoint via el servidor MCP, ver
+    docs/roadmap.md sección 2) terminan en el mismo único camino."""
     subject, body = render_user_invite_email(
         full_name=full_name, email=email, temporary_password=temporary_password
     )

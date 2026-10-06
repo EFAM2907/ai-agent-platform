@@ -52,12 +52,12 @@ async def create_user(
     except UserAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    # Mismo comportamiento que la tool de chat create_user
-    # (app.users.tools): si la organizacion tiene Gmail conectado y el
-    # envio no falla, la contraseña viaja solo por correo, nunca en
-    # esta respuesta -- antes esto solo pasaba desde el chat, ahora
-    # tambien desde la API REST, para que ambos caminos de creacion de
-    # usuario se comporten igual.
+    # Si la organizacion tiene Gmail conectado y el envio no falla, la
+    # contraseña viaja solo por correo, nunca en esta respuesta. La
+    # tool de chat create_user (servida hoy por el servidor MCP, ver
+    # docs/roadmap.md seccion 2) reenvia a este mismo endpoint en vez
+    # de duplicar esta decision -- ya no hay dos caminos que puedan
+    # desincronizarse entre si.
     sent = await send_user_invite_email(
         gmail_service,
         admin.organization_id,

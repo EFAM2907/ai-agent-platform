@@ -39,6 +39,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL}
@@ -67,6 +68,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  mcp-server:
+    # Proxy delgado sobre la API REST (FastMCP, streamable-http):
+    # no importa SQLAlchemy/asyncpg/cryptography, solo reenvia cada
+    # tool call como un request HTTP a la API, con el mismo Bearer
+    # token del usuario. Ver mcp_server/server.py para el detalle.
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8100:8100"
+    environment:
+      # La API principal (app/main.py) no corre en este
+      # docker-compose -- se levanta aparte con uvicorn en el host.
+      # host.docker.internal es como este contenedor alcanza el host
+      # en Docker Desktop (Windows/Mac). En Linux nativo sin Docker
+      # Desktop, host.docker.internal no resuelve por defecto: ahi
+      # hay que pasar MCP_SERVER_API_BASE_URL con la IP del host a mano.
+      - API_BASE_URL=${MCP_SERVER_API_BASE_URL:-http://host.docker.internal:8000}
+      - MCP_SERVER_PORT=8100
 
 
 

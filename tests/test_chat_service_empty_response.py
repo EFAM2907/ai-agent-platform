@@ -10,7 +10,7 @@ simplemente no respondio nada.
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,25 @@ from app.chat.models import ChatSession
 from app.chat.service import CHEAP_MODEL, ChatService, EmptyResponseError
 from app.llm.schemas import LLMResponse, TokenUsage
 from app.users.models import User, UserRole
+
+
+@pytest.fixture(autouse=True)
+def _fake_mcp_tools():
+    """ChatService abre una sesion MCP real (app.chat.mcp_tools.open_mcp_tools)
+    alrededor del tool loop -- estos tests ejercitan el tool loop en si
+    (via run_tool_loop/run_streaming_tool_loop), no el transporte MCP,
+    asi que se reemplaza por un context manager que entrega una lista
+    de tools vacia sin abrir ninguna conexion real. tests/test_chat_mcp_tools.py
+    cubre open_mcp_tools por separado."""
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _empty_tools(bearer_token: str):
+        yield []
+
+    with patch("app.chat.service.open_mcp_tools", _empty_tools):
+        yield
 
 
 def _current_user() -> User:
@@ -63,8 +82,6 @@ def _build_service(llm_client):
         llm_client=llm_client,
         model_router=model_router,
         session=AsyncMock(),
-        user_service=MagicMock(),
-        shipment_service=MagicMock(),
     )
     return service, repository, chat_session
 
@@ -81,6 +98,7 @@ async def test_send_message_raises_on_empty_response_and_does_not_persist_it():
             current_user=_current_user(),
             message="hola",
             session_id=None,
+            bearer_token="t",
         )
 
     # Solo el mensaje USER (de _prepare_turn) -- nunca se llega a
@@ -108,6 +126,7 @@ async def test_send_message_succeeds_with_real_content():
         current_user=_current_user(),
         message="hola",
         session_id=None,
+        bearer_token="t",
     )
 
     assert result.content == "Hola, en que te puedo ayudar?"
@@ -134,6 +153,7 @@ async def test_send_message_stream_yields_error_event_on_empty_response():
             current_user=_current_user(),
             message="hola",
             session_id=None,
+            bearer_token="t",
         )
     ]
 
@@ -172,6 +192,7 @@ async def test_send_message_stream_succeeds_with_real_content():
             current_user=_current_user(),
             message="hola",
             session_id=None,
+            bearer_token="t",
         )
     ]
 

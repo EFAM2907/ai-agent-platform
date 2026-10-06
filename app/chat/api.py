@@ -19,7 +19,7 @@ from app.chat.schemas import (
 )
 from app.chat.service import ChatService
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_password_changed
+from app.core.dependencies import get_bearer_token, get_current_user, require_password_changed
 from app.organizations.dependencies import get_current_organization
 from app.organizations.models import Organization
 from app.users.models import User
@@ -33,12 +33,14 @@ async def send_message(
     current_user: User = Depends(require_password_changed),
     organization: Organization = Depends(get_current_organization),
     chat_service: ChatService = Depends(get_chat_service),
+    bearer_token: str = Depends(get_bearer_token),
 ) -> ChatReplyOut:
     assistant_message = await chat_service.send_message(
         organization_id=organization.id,
         current_user=current_user,
         message=payload.message,
         session_id=payload.session_id,
+        bearer_token=bearer_token,
     )
     # Construido explicitamente, no via from_attributes=True sobre el
     # ORM directo: ChatMessage.sources es un string "|"-separado en la
@@ -60,6 +62,7 @@ async def send_message_stream(
     current_user: User = Depends(require_password_changed),
     organization: Organization = Depends(get_current_organization),
     chat_service: ChatService = Depends(get_chat_service),
+    bearer_token: str = Depends(get_bearer_token),
 ) -> StreamingResponse:
     """Mismo turno que POST /messages, pero como Server-Sent Events en
     vez de esperar la respuesta completa -- ver
@@ -81,6 +84,7 @@ async def send_message_stream(
             current_user=current_user,
             message=payload.message,
             session_id=payload.session_id,
+            bearer_token=bearer_token,
         ):
             event_type = event.pop("event")
             yield f"event: {event_type}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
