@@ -28,6 +28,25 @@ model_list:
       model: gemini/gemini-3.1-flash-lite
       api_key: os.environ/GEMINI_API_KEY
 
+  # DeepSeek: segundo pool de cuota, independiente del de Google, para
+  # el tier barato. El problema real que resuelve esto no es precio --
+  # DeepSeek SI cuesta (no tiene free tier, es prepago), pero a un
+  # precio tan bajo que no importa para el trafico de este proyecto --
+  # sino el rate-limit por RPM de la cuenta gratuita de Gemini, que es
+  # el techo real que hemos estado golpeando. No reemplaza a
+  # Anthropic/OpenAI como tier "calidad real" (ver CHEAP_MODEL/
+  # EXPENSIVE_MODEL en app/chat/service.py): ese sigue siendo el plan
+  # para cuando haya credito de pago de verdad.
+  #
+  # "deepseek-chat" es el nombre de modelo estable que expone la API
+  # de DeepSeek -- ellos mismos actualizan que checkpoint responde
+  # detras (DeepSeek-V4.1-Flash a esta fecha) sin que este archivo
+  # tenga que cambiar.
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
   - model_name: gpt-5.6-luna
     litellm_params:
       model: openai/gpt-5.6-luna
@@ -82,8 +101,13 @@ router_settings:
     # por cuenta, asi que un 429 en uno no implica que el otro tambien
     # este agotado. Es fallback "gratis" (mismo GEMINI_API_KEY, sin
     # tocar OpenAI/Anthropic) antes de caer a los proveedores sin credito.
-    - gemini-3.5-flash-lite: ["gemini-3.1-flash-lite", "gemini-3.6-flash", "gpt-5.6-luna"]
-    - gemini-3.1-flash-lite: ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gpt-5.6-luna"]
+    - gemini-3.5-flash-lite: ["gemini-3.1-flash-lite", "deepseek-chat", "gemini-3.6-flash", "gpt-5.6-luna"]
+    - gemini-3.1-flash-lite: ["gemini-3.5-flash-lite", "deepseek-chat", "gemini-3.6-flash", "gpt-5.6-luna"]
+    # Si el propio deepseek-chat falla (ej. saldo prepago agotado, ya
+    # que no tiene free tier), escala directo a los proveedores de pago
+    # sin credito en vez de volver al par flash-lite -- evita un ciclo
+    # entre los tres modelos "baratos" cuando los tres estan agotados.
+    - deepseek-chat: ["gemini-3.6-flash", "gpt-5.6-luna"]
   num_retries: 2
   cooldown_time: 60
 
