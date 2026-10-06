@@ -7,7 +7,8 @@ conocidos" de ese archivo (huecos o decisiones temporales dentro de lo
 ya construido), esto es trabajo nuevo: features que todavía no existen
 en el proyecto.
 
-Ninguno de estos está implementado todavía.
+Los puntos 2, 3 y 6 ya están implementados (ver las notas en cada
+uno); el resto sigue sin implementarse.
 
 ---
 
@@ -36,6 +37,35 @@ consumir ese servidor en vez de mantener el cliente propio.
 
 ## 2. Construir un MCP propio con FastMCP
 
+**Implementado, incluida la migracion del chat.** Ver `mcp_server/`
+-- servidor FastMCP (`transport="streamable-http"`) con las 10 tools
+de usuarios y envios, como un proxy delgado sobre la API REST
+existente (cada tool reenvia el request con el mismo Bearer token
+del cliente MCP, en vez de importar SQLAlchemy/los services directo
+-- ver el docstring de `mcp_server/server.py` para el detalle del
+diseno y el tradeoff que motivo esa decision). Tiene su propio
+Dockerfile liviano y servicio en `docker-compose.yml` (`mcp-server`,
+puerto 8100), y tests en `tests/test_mcp_server.py`.
+
+El pendiente que quedaba -- migrar el agente de chat para que use
+este servidor como cliente MCP en vez de las funciones in-process de
+`app/users/tools.py`/`app/shipments/tools.py` -- ya se hizo: esos dos
+modulos se borraron, y `ChatService` ahora abre una sesion MCP por
+turno (`app.chat.mcp_tools.open_mcp_tools`, ver su docstring) contra
+`mcp_server/`, reenviando el Bearer token del usuario que escribio el
+mensaje. Las tools que el LLM ve ya no se redeclaran a mano en el
+lado del chat -- vienen directo del `list_tools()` que anuncia el
+propio servidor MCP, mismo nombre/schema que ya definia cada
+`@mcp.tool`.
+
+Consecuencia real, no solo de codigo: `mcp_server/` pasa de ser "un
+camino mas, opcional, para otros clientes MCP" a ser una dependencia
+dura del chat -- si no esta levantado, ninguna conversacion con
+tools funciona. Esto era exactamente el tradeoff que este mismo punto
+pedia entender antes de migrar ("un proceso mas que desplegar y
+mantener, a cambio de una interfaz estandar..."); se decidio
+aceptarlo. Tests en `tests/test_chat_mcp_tools.py`.
+
 Para lo que **no** tiene un MCP existente que sirva — en este
 proyecto, la lógica de negocio propia de Inter Rapidísimo
 (`app/shipments/tools.py`, y probablemente `app/users/tools.py`) —
@@ -52,6 +82,41 @@ mantener, a cambio de una interfaz estándar y reusable desde otros
 clientes MCP, no solo este chat) antes de migrar todo de una.
 
 ## 3. Pipeline de ingestión de datos para el RAG con varias fuentes
+
+**Implementado.** Ver `app/rag/ingestion/` -- un loader por
+formato (`markdown_loader.py`, `pdf_loader.py` via `pypdf`,
+`excel_loader.py` via `openpyxl`) que normaliza cualquier fuente a
+`IngestedDocument`, y `registry.py` que elige el loader por
+extension (`load_documents`/`load_documents_from_dir`). El caso
+especial es Excel: una fila de tabla no es prosa, asi que
+`ExcelLoader` no usa el chunking por ventanas de palabras de
+`chunking.py` -- cada `IngestedDocument` trae su propio `chunks`
+(uno por fila, `"columna: valor; columna: valor"`) que
+`RAGService.ingest_article` usa tal cual en vez de re-chunkear.
+Un archivo de formato no soportado o que falla al leerse (ej. un
+PDF escaneado sin capa de texto) se saltea con un warning en vez
+de abortar toda la ingesta de la carpeta. Tests en
+`tests/test_rag_ingestion.py` y `tests/test_rag_service_ingest.py`.
+`RAGService.ingest_article` ahora hace upsert por
+`(organization_id, title)` (`app/rag/service.py`), asi que
+`scripts/ingest_kb_articles.py` ya es idempotente -- re-correrlo no
+duplica articulos, y si un archivo fuente cambio de contenido, la
+siguiente corrida actualiza el articulo existente en vez de sumar
+uno nuevo.
+
+**La mitad "manual" del pendiente ya se resolvio:** ver
+`scripts/run_kb_ingestion_scheduler.py` -- lee pares
+`(organization_id, subcarpeta)` desde `kb_content/ingestion_schedule.yaml`
+(plantilla en `kb_content/ingestion_schedule.yaml.example`; no se
+versiona con valores reales porque los `organization_id` son
+especificos de cada deployment) y corre la ingesta de forma
+idempotente, en modo `--once` (para que lo invoque un cron del SO,
+mismo patron que `scripts/run_gmail_poller.py`) o en bucle continuo
+cada `kb_ingestion_poll_interval_seconds` (default 1h). Un error en
+una organizacion no frena a las demas. Pendiente real que queda
+(la otra mitad, sin resolver): la fuente sigue siendo exclusivamente
+una carpeta local (`kb_content/<tenant>/`) -- no hay conectores a
+sistemas externos (un Drive, un Confluence, un CMS) todavia.
 
 Hoy la ingesta es manual y de una sola fuente: `scripts/ingest_kb_articles.py`
 lee archivos markdown estáticos de `kb_content/inter_rapidisimo/` (8
@@ -113,22 +178,30 @@ sin importar qué tan bien o mal haya salido.
 
 ## 6. Evaluación de RAG (métricas)
 
-Hoy existe evaluación para el `ModelRouter` (`eval_harness/model_routing_eval.py`
-+ `eval_harness/datasets/model_routing_golden.yaml`: mide qué tan bien
-clasifica barato/caro contra un dataset etiquetado a mano) pero nada
-equivalente para el RAG — no hay forma de saber, con números, si el
-sistema recupera los chunks correctos o si las respuestas realmente
-se basan en lo recuperado.
+**Implementado.** Ver `eval_harness/rag_eval.py` +
+`eval_harness/datasets/rag_golden.yaml` -- mismo patrón que
+`eval_harness/model_routing_eval.py` (script standalone, no pytest,
+porque llama LLMs reales con `LITELLM_EVAL_VIRTUAL_KEY` y consume
+presupuesto/tiempo real), aplicado al RAG en vez de al `ModelRouter`.
+El dataset son 13 preguntas reales sobre `kb_content/inter_rapidisimo/`
+con el/los títulos de artículo esperados (algunas cruzan dos artículos
+a propósito, ej. "¿cuándo se declara perdido un envío?" toca tanto
+`paquetes_perdidos.md` como `retrasos.md`). Por cada caso: llama a
+`RAGService.retrieve` y calcula precisión/recall de retrieval contra
+los títulos esperados, después genera una respuesta con el contexto
+recuperado y un juez LLM barato (`gemini-3.5-flash-lite`) evalúa si esa
+respuesta se sostiene en el contexto o inventa algo que no está ahí
+(faithfulness) -- no se trajo RAGAS como dependencia nueva, se
+replicaron esas dos métricas a mano con el mismo nivel de esfuerzo que
+ya tenía el harness de routing. Requiere que la KB de la organización
+pasada como argumento ya esté ingestada:
+`python -m scripts.ingest_kb_articles <organization_id> --dir inter_rapidisimo`
+seguido de `python -m eval_harness.rag_eval <organization_id>`.
 
-Construir esto significa un dataset propio de preguntas con la
-respuesta/fuente correcta esperada (mismo patrón que ya existe para el
-model routing, pero para la KB), y medir cosas como: si los chunks
-recuperados son los relevantes para esa pregunta (precisión/recall de
-retrieval), y si la respuesta generada se sostiene en lo que se
-recuperó o inventa cosas que no están ahí (faithfulness/groundedness).
-Frameworks como [RAGAS](https://github.com/explodinggradients/ragas)
-ya traen estas métricas implementadas, en vez de tener que calcularlas
-todas desde cero.
+Sin test dedicado, a propósito -- mismo motivo que
+`model_routing_eval.py`: no tiene sentido mockear llamadas reales a un
+LLM solo para ejercitar el harness, y pytest no es el lugar para algo
+que cuesta dinero cada vez que corre.
 
 ---
 
@@ -141,3 +214,11 @@ aunque sea con lo que existe hoy) antes de decidir si vale la pena
 complicar el chunking (punto 4) o probar GraphRAG/RAG agéntico (punto
 5) — sin esa evidencia, cualquier cambio ahí es una apuesta a ciegas.
 Los puntos 1-2 (MCP) son un track aparte, independiente del RAG.
+
+El punto 6 ya está implementado (`eval_harness/rag_eval.py`) -- antes
+de tocar el punto 4 o el 5, corré ese harness contra una organización
+con la KB real ingestada y mirá si el recall de retrieval o el
+faithfulness realmente fallan en casos concretos. El dataset actual
+(13 preguntas sobre 8 artículos) es chico a propósito; si la evidencia
+que da no alcanza para decidir, el primer paso es ampliarlo, no
+todavía complicar el chunking o probar GraphRAG a ciegas.
