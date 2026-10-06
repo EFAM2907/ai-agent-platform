@@ -51,6 +51,18 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[UserRole] = mapped_column(default=UserRole.MEMBER)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # True para cuentas creadas por un admin/owner (o por la tool
+    # create_user del agente) con una contraseña temporal generada --
+    # nunca una contraseña compartida entre usuarios (ver la decision
+    # en la conversacion: una contraseña general rompe la atribucion
+    # por user_id que el resto de la app ya depende). Se limpia a
+    # False en POST /auth/change-password, la unica ruta que puede
+    # apagarla. False por defecto: quien se registra con /auth/register
+    # elige su propia contraseña desde el principio, no hay nada que
+    # forzar a cambiar.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
     organization: Mapped["Organization"] = relationship(back_populates="users")

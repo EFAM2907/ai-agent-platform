@@ -18,6 +18,7 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(200))
     tax_id: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     plan_type: Mapped[str] = mapped_column(String(50), default="free")
+    litellm_virtual_key: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     users: Mapped[list["User"]] = relationship(back_populates="organization")

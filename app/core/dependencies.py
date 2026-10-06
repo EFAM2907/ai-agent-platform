@@ -59,6 +59,26 @@ def verify_same_organization(admin: User, target_organization_id: uuid.UUID) -> 
         raise HTTPException(status_code=404, detail="User not found")
 
 
+async def require_password_changed(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Bloquea las rutas de negocio (por ahora: enviar mensajes de chat)
+    mientras la cuenta siga con la contraseña temporal generada por
+    create_user -- si no se reforzara aca, must_change_password seria
+    solo cosmetico: el frontend podria mostrar la pantalla de cambio,
+    pero nada impediria llamar a la API directo sin pasar por ella.
+    Nunca se aplica a /auth/change-password ni a /auth/* en general
+    (séria una trampa sin salida) ni a las rutas de self-service sobre
+    la propia cuenta en /users -- solo a las rutas donde el usuario
+    "hace cosas" de verdad."""
+    if current_user.must_change_password:
+        raise HTTPException(
+            status_code=403,
+            detail="Password change required before using this feature",
+        )
+    return current_user
+
+
 def require_owner(current_user: User) -> User:
     if current_user.role != UserRole.OWNER:
         raise HTTPException(status_code=403, detail="Owner privileges required")

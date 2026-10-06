@@ -7,13 +7,6 @@ class OrganizationCreate(BaseModel):
     tax_id: str | None = None
 
 
-class OrganizationBootstrap(OrganizationCreate):
-    """Initial registration data for an organization and its first OWNER."""
-    owner_email: str
-    owner_password: str
-    owner_full_name: str
-    
-    
 class OrganizationResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -28,13 +21,12 @@ class OrganizationUpdate(BaseModel):
     name: str | None = None
     tax_id: str | None = None
     plan_type: str | None = None
-    
 
-# app/organizations/schemas.py
 
 class OrganizationBootstrap(BaseModel):
+    """Initial registration data for an organization and its first OWNER."""
     name: str
-    tax_id: str 
+    tax_id: str
     owner_email: EmailStr
     owner_password: str
     owner_full_name: str

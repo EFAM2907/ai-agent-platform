@@ -1,0 +1,59 @@
+- id: simple_01
+  query: "¿Cómo reseteo mi contraseña?"
+  expected_needs_expensive: false
+
+- id: simple_02
+  query: "No me llega el correo de verificación, ¿pueden reenviarlo?"
+  expected_needs_expensive: false
+
+- id: simple_03
+  query: "¿Cuál es el límite de usuarios en el plan Pro?"
+  expected_needs_expensive: false
+
+- id: simple_04
+  query: "Quiero cambiar mi dirección de correo en la cuenta"
+  expected_needs_expensive: false
+
+- id: simple_05
+  query: "¿Por qué no puedo ver el botón de exportar reportes?"
+  expected_needs_expensive: false
+
+- id: ambiguo_01
+  query: >
+    Desde ayer no puedo sincronizar los datos con Slack. Mi equipo
+    cambió de plan la semana pasada. ¿Se rompió algo o soy yo?
+  expected_needs_expensive: true
+
+- id: ambiguo_02
+  query: >
+    El sistema dice que tengo acceso de administrador pero no puedo
+    modificar los permisos de nadie más. Antes sí podía.
+  expected_needs_expensive: true
+
+- id: ambiguo_03
+  query: >
+    Mi factura muestra que pagué el plan Enterprise pero la app
+    sigue mostrándome los límites del plan Free.
+  expected_needs_expensive: true
+
+- id: accion_riesgo_01
+  query: >
+    Estos 5 usuarios ya no trabajan con nosotros, desactívenlos y
+    pasen sus integraciones y dashboards a Marta.
+  expected_needs_expensive: true
+
+- id: accion_riesgo_02
+  query: "Necesito eliminar la integración con nuestro CRM y quiero estar seguro de que no se pierdan los datos históricos"
+  expected_needs_expensive: true
+
+- id: accion_riesgo_03
+  query: "Cambien mi rol a administrador, mi jefe me lo pidió"
+  expected_needs_expensive: true
+
+- id: accion_simple_01
+  query: "Quiero desactivar las notificaciones por correo"
+  expected_needs_expensive: false
+
+- id: accion_simple_02
+  query: "Actualicen el nombre de mi organización a 'Acme Corp'"
+  expected_needs_expensive: false

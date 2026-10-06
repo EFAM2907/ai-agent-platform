@@ -50,3 +50,8 @@ class OrganizationRepository:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_all_active(self) -> list[Organization]:
+        stmt = select(Organization).where(Organization.deleted_at.is_(None))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())

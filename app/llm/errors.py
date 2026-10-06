@@ -66,6 +66,21 @@ class ProviderError(LLMError):
     específica."""
 
 
+class InvalidRequestError(LLMError):
+    """El proveedor rechazó la solicitud con un 400 (parámetros
+    inválidos, modelo sin crédito disponible, etc.) -- por definición
+    no transitorio: reintentar la MISMA solicitud nunca la arregla, a
+    diferencia de ProviderError (pensado para 5xx). La distinción
+    importa incluso ahora que LLMClient ya no reintenta nada por su
+    cuenta (ver su docstring): confundir un 400 con un 5xx fue lo que
+    hizo que una organización sin crédito en Anthropic tardara ~170s
+    en fallar en vez de fallar de inmediato."""
+
+
+class TenantVirtualKeyError(LLMError):
+    """No se pudo aprovisionar una virtual key de tenant en LiteLLM."""
+
+
 class ContentFilterError(LLMError):
     """El proveedor bloqueó la solicitud o la respuesta por políticas
     de contenido."""
