@@ -1,5 +1,8 @@
-"""Ingesta los articulos markdown de una subcarpeta de kb_content/ en la
-KB de una organizacion.
+"""Ingesta los archivos de una subcarpeta de kb_content/ en la KB de una
+organizacion. Soporta markdown (.md), PDF (.pdf) y Excel (.xlsx) en la
+misma carpeta, sin distinguir entre ellos a este nivel -- el formato
+real lo resuelve app.rag.ingestion.load_documents_from_dir, eligiendo
+el loader por extension de archivo (ver app/rag/ingestion/registry.py).
 
 Uso:
     python -m scripts.ingest_kb_articles <organization_id>
@@ -7,16 +10,21 @@ Uso:
 
 Sin --dir, usa kb_content/articles/ (comportamiento original, para no
 romper ningun uso existente). Con --dir <nombre>, ingiere
-kb_content/<nombre>/*.md -- asi cada tenant tiene su propia subcarpeta y
+kb_content/<nombre>/* -- asi cada tenant tiene su propia subcarpeta y
 un tenant nuevo nunca hereda articulos de otro por accidente.
 
-Nota: no chequea si un articulo con el mismo titulo ya existe para esa
-organizacion -- correrlo dos veces duplica los articulos. Para el
-alcance actual (una carga inicial por tenant antes del review) eso es
-aceptable; si este script pasa a correrse mas de una vez por tenant en
-el futuro, agregarle idempotencia (como tiene
-provision_existing_tenant_llm_keys.py para las virtual keys) antes de
-reusarlo asi.
+Un archivo de extension no soportada, o un PDF sin texto extraible
+(escaneado, sin OCR), se saltea con un warning en el log en vez de
+abortar toda la ingesta -- ver
+app.rag.ingestion.registry.load_documents_from_dir.
+
+Idempotente: RAGService.ingest_article hace upsert por (organization_id,
+titulo) -- correr este script dos veces sobre la misma carpeta no
+duplica articulos, y si un archivo fuente cambio de contenido, la
+segunda corrida actualiza el articulo existente (contenido + chunks +
+embeddings regenerados) en vez de sumar uno nuevo al lado. Seguro de
+correr periodicamente o despues de editar kb_content/, no solo como
+carga inicial.
 """
 
 from __future__ import annotations
@@ -30,24 +38,11 @@ from app.core.database import SessionLocal
 from app.organizations.dependencies import resolve_tenant_virtual_key
 from app.organizations.repository import OrganizationRepository
 from app.rag.embeddings import EmbeddingClient
+from app.rag.ingestion import load_documents_from_dir
 from app.rag.repository import KBRepository
 from app.rag.service import RAGService
 
 _KB_CONTENT_ROOT = Path(__file__).parent.parent / "kb_content"
-
-
-def _parse_article(path: Path) -> tuple[str, str]:
-    """Primera linea '# Titulo' -> titulo del articulo; el resto del
-    archivo (sin esa linea) es el contenido que se chunkea e indexa."""
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    if lines and lines[0].startswith("# "):
-        title = lines[0][2:].strip()
-        content = "\n".join(lines[1:]).strip()
-    else:
-        title = path.stem
-        content = text.strip()
-    return title, content
 
 
 async def ingest_kb_articles(organization_id: uuid.UUID, articles_dir: Path) -> int:
@@ -65,12 +60,16 @@ async def ingest_kb_articles(organization_id: uuid.UUID, articles_dir: Path) -> 
             session=session,
         )
 
-        article_paths = sorted(articles_dir.glob("*.md"))
-        for path in article_paths:
-            title, content = _parse_article(path)
-            await rag_service.ingest_article(organization_id, title, content)
+        documents = load_documents_from_dir(articles_dir)
+        for document in documents:
+            await rag_service.ingest_article(
+                organization_id,
+                document.title,
+                document.content,
+                chunks=document.chunks,
+            )
 
-        return len(article_paths)
+        return len(documents)
 
 
 async def main() -> None:
@@ -89,7 +88,7 @@ async def main() -> None:
 
     count = await ingest_kb_articles(args.organization_id, articles_dir)
     print(
-        f"{count} articulos indexados para la organizacion {args.organization_id} "
+        f"{count} documentos indexados para la organizacion {args.organization_id} "
         f"desde kb_content/{args.dir}/."
     )
 

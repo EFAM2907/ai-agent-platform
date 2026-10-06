@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.models import KBArticle, KBChunk
@@ -11,6 +11,23 @@ from app.rag.models import KBArticle, KBChunk
 class KBRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def get_article_by_title(
+        self, organization_id: uuid.UUID, title: str
+    ) -> KBArticle | None:
+        """Usado por RAGService.ingest_article para decidir si un
+        documento ya existe (upsert) o hay que crearlo -- el titulo es
+        la unica identidad estable que un loader conoce entre corridas
+        (un MarkdownLoader/PDFLoader siempre produce el mismo titulo
+        para el mismo archivo; ver app.rag.ingestion). Excluye
+        soft-deleted, mismo criterio que el resto del proyecto (ej.
+        UserRepository.get_by_email)."""
+        stmt = select(KBArticle).where(
+            KBArticle.organization_id == organization_id,
+            KBArticle.title == title,
+            KBArticle.deleted_at.is_(None),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def create_article(
         self, organization_id: uuid.UUID, title: str, content: str
@@ -21,6 +38,19 @@ class KBRepository:
         self.session.add(article)
         await self.session.flush()
         return article
+
+    async def update_article_content(self, article: KBArticle, content: str) -> None:
+        article.content = content
+        await self.session.flush()
+
+    async def delete_chunks_for_article(self, article_id: uuid.UUID) -> None:
+        """DELETE a nivel SQL, no session.delete() sobre los objetos ORM
+        -- mismo motivo que ChatRepository.delete_session: iterar
+        article.chunks fuera de un await explicito revienta con
+        MissingGreenlet en SQLAlchemy async. Se usa para reemplazar los
+        chunks de un articulo que ya existia (ver RAGService.ingest_article),
+        nunca para borrar el articulo en si."""
+        await self.session.execute(delete(KBChunk).where(KBChunk.article_id == article_id))
 
     async def add_chunks(
         self,

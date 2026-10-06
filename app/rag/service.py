@@ -22,17 +22,52 @@ class RAGService:
         self.session = session
 
     async def ingest_article(
-        self, organization_id: uuid.UUID, title: str, content: str
+        self,
+        organization_id: uuid.UUID,
+        title: str,
+        content: str,
+        *,
+        chunks: list[str] | None = None,
     ) -> KBArticle:
-        """Crea el articulo, lo parte en chunks, genera un embedding
-        por chunk y guarda todo en una sola transaccion -- un articulo
-        nunca queda a medio indexar (con fila en kb_articles pero sin
-        sus chunks) si algo falla a mitad de camino."""
-        article = await self.repository.create_article(
-            organization_id, title, content
-        )
+        """Upsert por (organization_id, title): si ya existe un articulo
+        con ese titulo para esa organizacion, se actualiza su contenido
+        y se regeneran sus chunks desde cero; si no, se crea. Esto es lo
+        que hace idempotente a scripts/ingest_kb_articles.py -- correrlo
+        dos veces sobre la misma carpeta ya no duplica articulos, y
+        editar un archivo fuente y volver a correrlo si actualiza el
+        contenido indexado (antes de este cambio, ninguna de las dos
+        cosas era cierta: cada corrida insertaba articulos nuevos sin
+        mirar si el titulo ya existia).
 
-        pieces = chunk_text(content)
+        El titulo es la unica identidad estable que un loader garantiza
+        entre corridas (ver app.rag.ingestion) -- dos fuentes distintas
+        que por accidente produzcan el mismo titulo pisan el mismo
+        articulo, "el ultimo que se ingiere gana"; con los loaders
+        actuales (titulo = encabezado H1 o nombre de archivo/hoja) eso
+        requeriria un choque de nombres deliberado, no algo que pase por
+        azar.
+
+        Reparte el articulo en chunks, genera un embedding por chunk y
+        guarda todo en una sola transaccion -- un articulo nunca queda
+        a medio indexar (con fila en kb_articles pero sin sus chunks, o
+        con chunks viejos y contenido nuevo) si algo falla a mitad de
+        camino.
+
+        chunks: override opcional del chunking por defecto. None (el
+        caso normal, markdown/PDF) usa chunk_text(content) -- ventanas
+        de palabras pensadas para prosa. Una fuente que ya sabe como
+        partirse a si misma lo pasa explicito -- ver
+        app.rag.ingestion.excel_loader.ExcelLoader, que arma un chunk
+        por fila en vez de dejar que chunk_text() trate una tabla como
+        si fuera un parrafo."""
+        article = await self.repository.get_article_by_title(organization_id, title)
+        if article is None:
+            article = await self.repository.create_article(organization_id, title, content)
+        else:
+            await self.repository.update_article_content(article, content)
+            await self.repository.delete_chunks_for_article(article.id)
+
+        pieces = chunks if chunks is not None else chunk_text(content)
         if pieces:
             vectors = await self.embedding_client.embed(pieces)
             await self.repository.add_chunks(
