@@ -1,9 +1,11 @@
 """Acceso a datos de envios y clientes. La mayoria sigue siendo solo
 lectura -- no existe (todavia) un flujo de negocio que cree envios o
 clientes desde la propia app (el seed script inserta directo) -- pero
-update_status/add_event si son de escritura: son el soporte de la tool
-update_shipment_status (ver app.shipments.tools), el primer caso real
-de una tool de escritura sobre datos de negocio de este dominio.
+update_status/add_event si son de escritura: son el soporte de
+PATCH /shipments/{tracking_number}/status (app.shipments.api), que la
+tool de chat update_shipment_status llama via el servidor MCP (ver
+docs/roadmap.md seccion 2) -- el primer caso real de una tool de
+escritura sobre datos de negocio de este dominio.
 """
 
 from __future__ import annotations

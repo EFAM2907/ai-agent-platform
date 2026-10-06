@@ -6,6 +6,7 @@ from app.users.api import router as users_router
 from app.auth.api import router as auth_router
 from app.chat.api import router as chat_router
 from app.gmail.api import router as gmail_router
+from app.shipments.api import router as shipments_router
 
 app = FastAPI(title="AI Agent Platform")
 
@@ -28,3 +29,4 @@ app.include_router(users_router)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(gmail_router)
+app.include_router(shipments_router)
