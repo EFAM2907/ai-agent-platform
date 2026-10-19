@@ -7,6 +7,10 @@ from app.auth.api import router as auth_router
 from app.chat.api import router as chat_router
 from app.gmail.api import router as gmail_router
 from app.shipments.api import router as shipments_router
+from app.rag.api import router as kb_router
+from app.claims.api import router as claims_router
+from app.drive.api import router as drive_router
+from app.core.sts import jwks as sts_jwks
 
 app = FastAPI(title="AI Agent Platform")
 
@@ -24,9 +28,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
+@app.get("/.well-known/jwks.json", tags=["auth"], include_in_schema=False)
+async def jwks_endpoint() -> dict:
+    """Claves publicas con las que el MCP server (resource server) valida
+    los tokens delegados que emite app.core.sts."""
+    return sts_jwks()
+
+
 app.include_router(organizations_router)
 app.include_router(users_router)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(gmail_router)
 app.include_router(shipments_router)
+app.include_router(kb_router)
+app.include_router(claims_router)
+app.include_router(drive_router)

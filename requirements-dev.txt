@@ -1,0 +1,4 @@
+# Solo para generar el corpus sintetico de prueba (scripts/generate_sample_kb.py);
+# la app en runtime no lo necesita.
+-r requirements.txt
+fpdf2==2.8.9

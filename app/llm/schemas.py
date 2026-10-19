@@ -96,10 +96,17 @@ class LLMRequest(BaseModel):
     # modelo que no razona, el gateway simplemente lo ignora.
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
 
-    # Metadata para trazabilidad (Langfuse, logging de costo), no se
-    # envía al proveedor.
+    # Metadata para trazabilidad (Langfuse, logging de costo). No va al
+    # proveedor del modelo: LiteLLMProvider la manda al GATEWAY en
+    # `metadata` (ver LiteLLMProvider._extra_body) para que Langfuse
+    # agrupe todas las llamadas de un mismo turno (clasificador, vueltas
+    # de herramientas, respuesta) bajo un unico trace, con su sesion,
+    # usuario y tenant.
     tenant_id: str | None = None
     request_tag: str | None = None
+    trace_id: str | None = None
+    session_id: str | None = None
+    user_id: str | None = None
 
 
 class TokenUsage(BaseModel):

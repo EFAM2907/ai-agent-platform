@@ -12,6 +12,7 @@ Excel con varias hojas -> un IngestedDocument por hoja), por eso
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -33,6 +34,11 @@ class IngestedDocument:
     title: str
     content: str
     chunks: list[str] | None = None
+    # De donde salio (lo completa el registry / el conector, no el loader):
+    # nombre de archivo, id de Drive... Ver KBArticle.source_ref.
+    source_ref: str | None = None
+    mime_type: str | None = None
+    source_modified_at: datetime | None = None
 
 
 class DocumentLoadError(Exception):

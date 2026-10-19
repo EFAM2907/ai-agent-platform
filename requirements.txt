@@ -83,3 +83,5 @@ watchfiles==1.2.0
 websockets==17.0.1
 anthropic==1.2.0
 google-generativeai==0.8.6
+python-docx==1.2.0
+lxml==6.1.3

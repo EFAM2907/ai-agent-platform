@@ -19,8 +19,18 @@ import mcp_types
 import pytest
 from fastmcp.client.client import CallToolResult
 
+import uuid
+from types import SimpleNamespace
+
+import jwt
+
 from app.chat.mcp_tools import open_mcp_tools
 from app.core.config import settings
+from app.users.models import UserRole
+
+
+def _user(role: UserRole = UserRole.ADMIN):
+    return SimpleNamespace(id=uuid.uuid4(), organization_id=uuid.uuid4(), role=role)
 
 
 def _mcp_tool(name: str = "list_users") -> mcp_types.Tool:
@@ -46,9 +56,10 @@ def _fake_client(list_tools_result, call_tool_result=None):
 
 class TestOpenMcpTools:
     @pytest.mark.asyncio
-    async def test_abre_la_sesion_con_la_url_y_el_bearer_token(self):
+    async def test_abre_la_sesion_con_un_token_delegado_no_con_el_jwt_del_usuario(self):
         client = _fake_client([_mcp_tool("list_users")])
         fake_transport = MagicMock()
+        user = _user()
 
         with (
             patch("app.chat.mcp_tools.Client", return_value=client) as client_cls,
@@ -56,16 +67,54 @@ class TestOpenMcpTools:
                 "app.chat.mcp_tools.StreamableHttpTransport", return_value=fake_transport
             ) as transport_cls,
         ):
-            async with open_mcp_tools("el-token-del-usuario") as tools:
+            async with open_mcp_tools(user) as tools:
                 assert [t.name for t in tools] == ["list_users"]
 
-        transport_cls.assert_called_once_with(
-            url=settings.mcp_server_url,
-            headers={"Authorization": "Bearer el-token-del-usuario"},
-        )
+        kwargs = transport_cls.call_args.kwargs
+        assert kwargs["url"] == settings.mcp_server_url
+        scheme, _, token = kwargs["headers"]["Authorization"].partition(" ")
+        assert scheme == "Bearer"
+        claims = jwt.decode(token, options={"verify_signature": False})
+        assert claims["aud"] == settings.mcp_audience
+        assert claims["sub"] == str(user.id)
+        assert claims["act"] == {"sub": "chat-service"}
         client_cls.assert_called_once_with(fake_transport)
         client.__aenter__.assert_awaited_once()
         client.__aexit__.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_las_tools_destructivas_no_se_ejecutan_sino_piden_confirmacion(self):
+        client = _fake_client([_mcp_tool("delete_user")], call_tool_result=None)
+        client.call_tool = AsyncMock()
+        handler = AsyncMock(return_value={"status": "pending_confirmation"})
+
+        with (
+            patch("app.chat.mcp_tools.Client", return_value=client),
+            patch("app.chat.mcp_tools.StreamableHttpTransport"),
+        ):
+            async with open_mcp_tools(_user(), confirmation_handler=handler) as tools:
+                [tool] = tools
+                returned = await tool.handler(user_id="abc")
+
+        client.call_tool.assert_not_awaited()
+        handler.assert_awaited_once_with("delete_user", {"user_id": "abc"})
+        assert returned == {"status": "pending_confirmation"}
+
+    @pytest.mark.asyncio
+    async def test_sin_handler_de_confirmacion_una_tool_destructiva_se_rechaza(self):
+        client = _fake_client([_mcp_tool("sync_drive")])
+        client.call_tool = AsyncMock()
+
+        with (
+            patch("app.chat.mcp_tools.Client", return_value=client),
+            patch("app.chat.mcp_tools.StreamableHttpTransport"),
+        ):
+            async with open_mcp_tools(_user()) as tools:
+                [tool] = tools
+                returned = await tool.handler()
+
+        client.call_tool.assert_not_awaited()
+        assert "error" in returned
 
     @pytest.mark.asyncio
     async def test_traduce_nombre_descripcion_y_schema_de_cada_mcp_tool(self):
@@ -76,7 +125,7 @@ class TestOpenMcpTools:
             patch("app.chat.mcp_tools.Client", return_value=client),
             patch("app.chat.mcp_tools.StreamableHttpTransport"),
         ):
-            async with open_mcp_tools("t") as tools:
+            async with open_mcp_tools(_user()) as tools:
                 [tool] = tools
 
         assert tool.name == "get_shipment_status"
@@ -101,7 +150,7 @@ class TestOpenMcpTools:
             patch("app.chat.mcp_tools.Client", return_value=client),
             patch("app.chat.mcp_tools.StreamableHttpTransport"),
         ):
-            async with open_mcp_tools("t") as tools:
+            async with open_mcp_tools(_user()) as tools:
                 [tool] = tools
                 returned = await tool.handler(limit=5)
 
@@ -123,7 +172,7 @@ class TestOpenMcpTools:
             patch("app.chat.mcp_tools.Client", return_value=client),
             patch("app.chat.mcp_tools.StreamableHttpTransport"),
         ):
-            async with open_mcp_tools("t") as tools:
+            async with open_mcp_tools(_user()) as tools:
                 [tool] = tools
                 returned = await tool.handler(tracking_number="ABC123")
 

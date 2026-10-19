@@ -14,7 +14,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from mcp_server import auth as mcp_auth
 from mcp_server import server as mcp_server_module
+from app.core.scopes import TOOL_SCOPE
 from mcp_server.client import BackendAPIError
 from mcp_server.client import request as client_request
 
@@ -133,21 +135,19 @@ class TestClientRequest:
 
 
 class TestForwardedHeaders:
-    def test_con_authorization_la_devuelve(self, monkeypatch):
-        monkeypatch.setattr(
-            mcp_server_module,
-            "get_http_headers",
-            lambda include: {"authorization": "Bearer t"},
-        )
+    def test_con_un_token_validado_lo_reenvia_como_bearer(self):
+        reset = mcp_auth._current_token.set("delegado")
+        try:
+            assert mcp_server_module._forwarded_headers() == {
+                "authorization": "Bearer delegado"
+            }
+        finally:
+            mcp_auth._current_token.reset(reset)
 
-        assert mcp_server_module._forwarded_headers() == {"authorization": "Bearer t"}
-
-    def test_sin_authorization_lanza_permission_error(self, monkeypatch):
-        # Sin token no hay con que autenticar el request reenviado --
-        # esto es un error de configuracion del cliente MCP, no un
-        # resultado de negocio (ver el docstring de _call).
-        monkeypatch.setattr(mcp_server_module, "get_http_headers", lambda include: {})
-
+    def test_sin_token_validado_lanza_permission_error(self):
+        # Sin token validado no hay con que autenticar el request
+        # reenviado -- es un error de configuracion, no un resultado de
+        # negocio (ver el docstring de _call).
         with pytest.raises(PermissionError):
             mcp_server_module._forwarded_headers()
 
@@ -185,8 +185,6 @@ class TestCall:
         # atrapar _call como hace con BackendAPIError, porque no es un
         # resultado de negocio que el LLM pueda leer y explicarle al
         # usuario -- es la tool call mal configurada.
-        monkeypatch.setattr(mcp_server_module, "get_http_headers", lambda include: {})
-
         with pytest.raises(PermissionError):
             await mcp_server_module._call("GET", "/users/")
 
@@ -200,6 +198,19 @@ class TestTools:
 
     @pytest.fixture(autouse=True)
     def _auth(self, monkeypatch):
+        # La validacion del token (firma, scope, aprobacion) se prueba en
+        # tests/test_delegation.py; aca se la deja pasar para probar solo
+        # el reenvio a la API.
+        monkeypatch.setattr(mcp_auth, "_bearer_token", lambda: "t")
+        monkeypatch.setattr(mcp_auth, "args_hash", lambda _args: "ok")
+        monkeypatch.setattr(
+            mcp_auth,
+            "validate_token",
+            lambda _t: {
+                "sub": "u", "jti": "j", "scope": " ".join(TOOL_SCOPE.values()),
+                "approved_action": "a", "args_hash": "ok",
+            },
+        )
         monkeypatch.setattr(
             mcp_server_module, "_forwarded_headers", lambda: {"authorization": "Bearer t"}
         )

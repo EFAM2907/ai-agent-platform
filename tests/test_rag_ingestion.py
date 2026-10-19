@@ -12,6 +12,7 @@ import pytest
 from openpyxl import Workbook
 
 from app.rag.ingestion.base import DocumentLoadError, IngestedDocument
+from app.rag.ingestion.docx_loader import DocxLoader
 from app.rag.ingestion.excel_loader import ExcelLoader
 from app.rag.ingestion.markdown_loader import MarkdownLoader
 from app.rag.ingestion.pdf_loader import PDFLoader
@@ -183,3 +184,87 @@ class TestRegistry:
         documents = load_documents_from_dir(tmp_path)
 
         assert [doc.title for doc in documents] == ["Primero", "Segundo"]
+
+
+class TestDocxLoader:
+    @staticmethod
+    def _save(document, path):
+        document.save(str(path))
+        return path
+
+    def test_titulos_y_parrafos_se_convierten_a_markdown(self, tmp_path):
+        from docx import Document
+
+        doc = Document()
+        doc.add_heading("Procedimiento de reclamos", level=1)
+        doc.add_paragraph("El analista revisa el caso en 48 horas.")
+        doc.add_heading("Escalamiento", level=2)
+        doc.add_paragraph("Si no hay respuesta, se escala al supervisor.")
+        path = self._save(doc, tmp_path / "Procedimiento de reclamos.docx")
+
+        [document] = DocxLoader().load(path)
+
+        assert document.title == "Procedimiento de reclamos"
+        assert "# Procedimiento de reclamos" in document.content
+        assert "## Escalamiento" in document.content
+        assert "El analista revisa el caso en 48 horas." in document.content
+
+    def test_cada_fila_de_tabla_es_un_chunk_con_su_seccion(self, tmp_path):
+        from docx import Document
+
+        doc = Document()
+        doc.add_heading("Articulos restringidos", level=1)
+        table = doc.add_table(rows=3, cols=2)
+        table.rows[0].cells[0].text = "Codigo"
+        table.rows[0].cells[1].text = "Descripcion"
+        table.rows[1].cells[0].text = "R-14"
+        table.rows[1].cells[1].text = "Baterias de litio"
+        table.rows[2].cells[0].text = "R-22"
+        table.rows[2].cells[1].text = "Aerosoles"
+        path = self._save(doc, tmp_path / "restringidos.docx")
+
+        [document] = DocxLoader().load(path)
+
+        assert document.chunks is not None
+        assert "Articulos restringidos > Codigo: R-14; Descripcion: Baterias de litio" in document.chunks
+        assert "Articulos restringidos > Codigo: R-22; Descripcion: Aerosoles" in document.chunks
+        assert "| Codigo | Descripcion |" in document.content
+
+    def test_las_listas_se_convierten_a_vinetas(self, tmp_path):
+        from docx import Document
+
+        doc = Document()
+        doc.add_paragraph("Primer paso", style="List Bullet")
+        doc.add_paragraph("Segundo paso", style="List Bullet")
+        path = self._save(doc, tmp_path / "pasos.docx")
+
+        [document] = DocxLoader().load(path)
+
+        assert "- Primer paso" in document.content
+        assert "- Segundo paso" in document.content
+
+    def test_documento_sin_texto_lanza_error(self, tmp_path):
+        from docx import Document
+
+        path = self._save(Document(), tmp_path / "vacio.docx")
+
+        with pytest.raises(DocumentLoadError):
+            DocxLoader().load(path)
+
+    def test_archivo_que_no_es_docx_lanza_error(self, tmp_path):
+        path = tmp_path / "falso.docx"
+        path.write_bytes(b"esto no es un zip")
+
+        with pytest.raises(DocumentLoadError):
+            DocxLoader().load(path)
+
+    def test_el_registry_carga_docx_por_extension(self, tmp_path):
+        from docx import Document
+
+        doc = Document()
+        doc.add_paragraph("Contenido de prueba.")
+        path = self._save(doc, tmp_path / "nota.docx")
+
+        [document] = load_documents(path)
+
+        assert document.title == "nota"

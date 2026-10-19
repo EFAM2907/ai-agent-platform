@@ -1,21 +1,41 @@
-# Dataset golden para eval_harness/rag_eval.py -- preguntas reales
-# sobre la KB de kb_content/inter_rapidisimo/ con el/los titulos de
-# articulo que deberian aparecer entre los chunks recuperados.
-# expected_titles es una lista porque algunas preguntas cruzan mas de
-# un articulo a proposito (ver 03-paquetes-danados.md referenciando a
-# indemnizaciones.md, o retrasos.md/paquetes_perdidos.md entre si) --
-# mismo principio que model_routing_golden.yaml, pero para RAG.
+# Dataset golden para eval_harness/rag_eval.py -- preguntas sobre la KB
+# de kb_content/inter_rapidisimo/ (8 articulos reales de politica en md +
+# el corpus SINTETICO de scripts/generate_sample_kb.py: md, pdf, xlsx y
+# docx con tarifas, codigos de oficina y de novedad inventados).
+#
+# Campos de cada caso:
+#   id, query
+#   group: semantic | exact | mixed
+#     semantic -> parafrasis, sin terminos exactos: la busqueda vectorial
+#                 deberia bastar; sirve para detectar si la hibrida EMPEORA.
+#     exact    -> la respuesta depende de un dato exacto (codigo, monto,
+#                 horario de una oficina): donde las palabras clave deben aportar.
+#     mixed    -> parte prosa, parte dato exacto.
+#   expected_titles: titulos de articulo que deben aparecer entre los
+#     chunks recuperados (recall por articulo). Lista porque algunas
+#     preguntas cruzan mas de un articulo a proposito.
+#   expected_text (opcional): fragmentos de texto que deben aparecer en
+#     los chunks recuperados (recall por respuesta). Es la metrica que de
+#     verdad distingue buscar en la fila correcta de una tabla de 99 filas:
+#     el titulo del articulo es el mismo para todas.
 #
 # IMPORTANTE: antes de correr el eval, la organizacion pasada como
 # argumento debe tener esta KB ya ingestada -- ver
 # "python -m scripts.ingest_kb_articles <organization_id> --dir inter_rapidisimo".
+# Si se cambia un dato en scripts/sample_kb_text.py o sample_kb_tables.py,
+# hay que actualizar aca la pregunta que lo usa.
 
+# ---------------------------------------------------------------------------
+# semantic -- los 13 casos originales
+# ---------------------------------------------------------------------------
 - id: estados_01
+  group: semantic
   query: "¿Qué significa que mi paquete esté en bodega destino?"
   expected_titles:
     - "Consulta y Estados de un Envío"
 
 - id: estados_02
+  group: semantic
   query: >
     Cuando un cliente pregunta dónde está su paquete, ¿qué información
     tiene que incluir siempre la respuesta además del estado actual?
@@ -23,57 +43,347 @@
     - "Consulta y Estados de un Envío"
 
 - id: retrasos_01
+  group: semantic
   query: "¿Después de cuántos días hábiles sin movimiento se considera demorado un envío dentro de la misma ciudad?"
   expected_titles:
     - "Política de Envíos Demorados y Apertura de Investigación"
 
 - id: retrasos_02
+  group: semantic
   query: "¿Hay que pedirle confirmación al cliente antes de abrir una investigación por demora?"
   expected_titles:
     - "Política de Envíos Demorados y Apertura de Investigación"
 
 - id: perdidos_01
+  group: semantic
   query: "¿Cuándo se declara oficialmente perdido un envío?"
   expected_titles:
     - "Procedimiento para Envíos Perdidos"
     - "Política de Envíos Demorados y Apertura de Investigación"
 
 - id: danos_01
+  group: semantic
   query: "¿Qué debe hacer un cliente si su paquete llega dañado al momento de la entrega?"
   expected_titles:
     - "Procedimiento para Paquetes que Llegan Averiados"
 
 - id: danos_02
+  group: semantic
   query: "Si bodega detecta el daño antes de repartir el paquete, ¿el cliente tiene que reportar algo?"
   expected_titles:
     - "Procedimiento para Paquetes que Llegan Averiados"
 
 - id: reclamaciones_01
+  group: semantic
   query: "¿Cuánto tiempo tengo para presentar una reclamación después de que se admitió mi envío?"
   expected_titles:
     - "Cómo y Cuándo Presentar una Reclamación"
 
 - id: reclamaciones_02
+  group: semantic
   query: "¿Qué tipos de reclamación existen en Inter Rapidísimo?"
   expected_titles:
     - "Cómo y Cuándo Presentar una Reclamación"
 
 - id: indemnizacion_01
+  group: semantic
   query: "¿Cuánto me indemnizan si mi paquete se pierde y no tenía seguro contratado?"
   expected_titles:
     - "Política de Indemnización por Envíos Dañados, Perdidos o con Retraso Extremo"
 
 - id: indemnizacion_02
+  group: semantic
   query: "¿Qué pasa si mi envío tiene un retraso extremo de más de 10 días pero no llega a declararse perdido?"
   expected_titles:
     - "Política de Indemnización por Envíos Dañados, Perdidos o con Retraso Extremo"
 
 - id: tarifas_01
+  group: semantic
   query: "¿Cuáles son los tiempos de entrega estimados del servicio Express?"
   expected_titles:
     - "Tarifas y Tiempos de Entrega por Servicio"
 
 - id: servicios_01
+  group: semantic
   query: "¿En qué consiste el servicio de recaudo contra entrega?"
   expected_titles:
     - "Portafolio de Servicios de Inter Rapidísimo"
+
+# ---------------------------------------------------------------------------
+# semantic -- parafrasis sobre el corpus ampliado
+# ---------------------------------------------------------------------------
+- id: sem_intentos
+  group: semantic
+  query: "Mi mamá no estaba en casa cuando pasó el mensajero, ¿cuántas veces más intentan entregarlo?"
+  expected_titles:
+    - "Devoluciones y Reexpedición de Envíos"
+
+- id: sem_otra_direccion
+  group: semantic
+  query: "¿Puedo pedir que lleven el paquete a un sitio distinto después de haberlo despachado?"
+  expected_titles:
+    - "Cambio de Dirección de Entrega"
+
+- id: sem_florero
+  group: semantic
+  query: "¿Cómo debo proteger un florero de vidrio para mandarlo por transportadora?"
+  expected_titles:
+    - "Manual de embalaje y empaque"
+
+- id: sem_domingo
+  group: semantic
+  query: "¿Me pueden traer el pedido un domingo?"
+  expected_titles:
+    - "Horarios y Ventanas de Entrega"
+
+- id: sem_mascotas
+  group: semantic
+  query: "¿Pueden transportar una mascota de una ciudad a otra?"
+  expected_titles:
+    - "Articulos prohibidos y restringidos"
+
+- id: sem_privacidad
+  group: semantic
+  query: "¿Qué hacen con mis datos personales y por cuánto tiempo los guardan?"
+  expected_titles:
+    - "Política de tratamiento de datos personales"
+
+- id: sem_recoleccion
+  group: semantic
+  query: "Necesito que un mensajero pase a recoger varios paquetes a mi negocio, ¿tiene costo?"
+  expected_titles:
+    - "Recolección a Domicilio"
+
+# ---------------------------------------------------------------------------
+# exact -- el dato exacto decide
+# ---------------------------------------------------------------------------
+- id: exacto_danos_bodega
+  group: exact
+  query: 'Motivo "daño en bodega"'
+  expected_titles:
+    - "Procedimiento para Paquetes que Llegan Averiados"
+
+- id: exacto_reclamacion_30_dias
+  group: exact
+  query: "30 días calendario"
+  expected_titles:
+    - "Cómo y Cuándo Presentar una Reclamación"
+
+- id: exacto_express_rurales
+  group: exact
+  query: "Express zonas rurales"
+  expected_titles:
+    - "Tarifas y Tiempos de Entrega por Servicio"
+
+- id: exacto_novedad
+  group: exact
+  query: "envío con novedad"
+  expected_titles:
+    - "Consulta y Estados de un Envío"
+
+- id: ex_tarifa_leticia
+  group: exact
+  query: "¿Cuánto cuesta enviar de Bogotá a Leticia un paquete de 3 kg en servicio estándar?"
+  expected_titles:
+    - "Tarifario referencial - Tarifas"
+  expected_text:
+    - "50400"
+
+- id: ex_tarifa_express
+  group: exact
+  query: "Tarifa Express de Medellín a Cartagena para un paquete de 5 a 10 kg"
+  expected_titles:
+    - "Tarifario referencial - Tarifas"
+  expected_text:
+    - "49400"
+
+- id: ex_tarifa_pasto
+  group: exact
+  query: "Precio estándar de Cali a Pasto hasta 1 kg"
+  expected_titles:
+    - "Tarifario referencial - Tarifas"
+  expected_text:
+    - "12400"
+
+- id: ex_oficina_horario
+  group: exact
+  query: "¿Qué horario tiene los sábados la oficina OFC-MED-003?"
+  expected_titles:
+    - "Directorio de oficinas - Oficinas"
+  expected_text:
+    - "OFC-MED-003"
+    - "8:00 a 12:00"
+
+- id: ex_oficina_leticia
+  group: exact
+  query: "¿Cuál es la dirección de la oficina de Leticia?"
+  expected_titles:
+    - "Directorio de oficinas - Oficinas"
+  expected_text:
+    - "Carrera 11 # 8-25"
+
+- id: ex_novedad_n07
+  group: exact
+  query: "¿Qué significa el código de novedad N-07?"
+  expected_titles:
+    - "Catalogo de codigos de novedad - Novedades"
+  expected_text:
+    - "Paquete sin rótulo legible"
+
+- id: ex_dane_guaviare
+  group: exact
+  query: "¿Cuál es el código DANE de San José del Guaviare?"
+  expected_titles:
+    - "Cobertura de municipios - Cobertura"
+  expected_text:
+    - "95001"
+
+- id: ex_articulo_9
+  group: exact
+  query: "¿Qué establece el artículo 9 del contrato de transporte sobre la limitación de responsabilidad?"
+  expected_titles:
+    - "Condiciones del contrato de transporte"
+  expected_text:
+    - "$300.000"
+
+- id: ex_rec05
+  group: exact
+  query: "¿A qué tipo de caso corresponde el código REC-05?"
+  expected_titles:
+    - "Procedimiento interno de atencion de reclamos"
+  expected_text:
+    - "Entrega a persona no autorizada"
+
+- id: ex_resolucion
+  group: exact
+  query: "¿Qué cambia la Resolución interna RI-2026-031?"
+  expected_titles:
+    - "Circular 2026-014 Recaudo contra entrega"
+  expected_text:
+    - "RI-2026-031"
+
+- id: ex_r01
+  group: exact
+  query: "¿Qué artículo corresponde al código R-01?"
+  expected_titles:
+    - "Articulos prohibidos y restringidos"
+  expected_text:
+    - "Baterías de litio"
+
+# ---------------------------------------------------------------------------
+# mixed -- prosa + dato exacto
+# ---------------------------------------------------------------------------
+- id: mix_litio
+  group: mixed
+  query: "Quiero enviar dos baterías de litio, ¿se pueden y cómo las debo empacar?"
+  expected_titles:
+    - "Articulos prohibidos y restringidos"
+
+- id: mix_recaudo_plazo
+  group: mixed
+  query: "¿En cuántos días me liquidan el recaudo contra entrega y cuánto cobran de comisión?"
+  expected_titles:
+    - "Circular 2026-014 Recaudo contra entrega"
+    - "Instructivo de recaudo contra entrega"
+  expected_text:
+    - "3 días hábiles"
+    - "2,5%"
+
+- id: mix_n11
+  group: mixed
+  query: "El destinatario no tenía dinero para el recaudo, ¿qué novedad se registra y qué hace el mensajero?"
+  expected_titles:
+    - "Catalogo de codigos de novedad - Novedades"
+    - "Instructivo de recaudo contra entrega"
+  expected_text:
+    - "N-11"
+
+- id: mix_mitu
+  group: mixed
+  query: "Mi envío a Mitú lleva varios días sin moverse, ¿es normal?"
+  expected_titles:
+    - "Cobertura de municipios - Cobertura"
+    - "Entrega en Zonas Rurales y de Difícil Acceso"
+
+- id: mix_descuento
+  group: mixed
+  query: "Mi empresa envía más de 2.000 paquetes al mes, ¿qué descuento nos corresponde?"
+  expected_titles:
+    - "Clientes Corporativos y Contrato Marco"
+  expected_text:
+    - "12%"
+
+- id: mix_pqr
+  group: mixed
+  query: "Puse una queja hace unos días, ¿cuánto tienen para responderme y qué número de radicado debieron darme?"
+  expected_titles:
+    - "Atención de Peticiones, Quejas y Reclamos (PQR)"
+  expected_text:
+    - "15 días hábiles"
+
+# ---------------------------------------------------------------------------
+# out_of_scope -- NO hay respuesta en la KB. Lo correcto es que la busqueda
+# no devuelva contexto (el agente dira que no tiene la informacion o usara
+# una tool). expected_titles vacio; `abstain: true` los saca de las metricas
+# de recall y los mide aparte (cuantos devuelven contexto de todas formas).
+# Dos tipos: sin relacion con el negocio, y del dominio pero que la KB no cubre.
+# ---------------------------------------------------------------------------
+- id: neg_francia
+  group: out_of_scope
+  abstain: true
+  query: "¿Cuál es la capital de Francia?"
+  expected_titles: []
+
+- id: neg_arepas
+  group: out_of_scope
+  abstain: true
+  query: "Dame una receta para hacer arepas de choclo"
+  expected_titles: []
+
+- id: neg_clima
+  group: out_of_scope
+  abstain: true
+  query: "¿Va a llover mañana en Medellín?"
+  expected_titles: []
+
+- id: neg_futbol
+  group: out_of_scope
+  abstain: true
+  query: "¿Quién ganó el último partido de la selección?"
+  expected_titles: []
+
+- id: neg_codigo
+  group: out_of_scope
+  abstain: true
+  query: "Escribe una función en Python que ordene una lista"
+  expected_titles: []
+
+- id: neg_tokio
+  group: out_of_scope
+  abstain: true
+  query: "¿Cuál es el horario de la oficina de Inter Rapidísimo en Tokio?"
+  expected_titles: []
+
+- id: neg_acciones
+  group: out_of_scope
+  abstain: true
+  query: "¿Cuánto vale hoy la acción de la empresa en la bolsa?"
+  expected_titles: []
+
+- id: neg_vida
+  group: out_of_scope
+  abstain: true
+  query: "¿Venden seguros de vida o seguros médicos?"
+  expected_titles: []
+
+- id: neg_empleo
+  group: out_of_scope
+  abstain: true
+  query: "Quiero trabajar como mensajero, ¿cómo envío mi hoja de vida?"
+  expected_titles: []
+
+- id: neg_dhl
+  group: out_of_scope
+  abstain: true
+  query: "¿Cómo rastreo un paquete que mandé por DHL?"
+  expected_titles: []

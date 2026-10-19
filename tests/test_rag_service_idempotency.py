@@ -127,3 +127,71 @@ async def test_two_organizations_with_the_same_title_never_collide(db_session):
     assert len(await _articles(db_session, org_b.id)) == 1
     refreshed_a = (await _articles(db_session, org_a.id))[0]
     assert refreshed_a.content == "contenido de A"
+
+
+class CountingEmbeddingClient(FakeEmbeddingClient):
+    def __init__(self) -> None:
+        self.embedded_texts = 0
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.embedded_texts += len(texts)
+        return await super().embed(texts)
+
+
+class FailingEmbeddingClient:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("cuota agotada")
+
+
+@pytest.mark.asyncio
+async def test_unchanged_content_is_not_embedded_again(db_session):
+    org = await create_organization(db_session)
+    embeddings = CountingEmbeddingClient()
+    service = RAGService(
+        repository=KBRepository(db_session), embedding_client=embeddings, session=db_session
+    )
+
+    await service.ingest_article(org.id, "Tarifas", "contenido estable")
+    after_first = embeddings.embedded_texts
+    await service.ingest_article(org.id, "Tarifas", "contenido estable")
+
+    assert after_first == 1
+    assert embeddings.embedded_texts == after_first  # la 2da corrida no llamo al proveedor
+
+
+@pytest.mark.asyncio
+async def test_force_reembeds_even_when_content_is_unchanged(db_session):
+    org = await create_organization(db_session)
+    embeddings = CountingEmbeddingClient()
+    service = RAGService(
+        repository=KBRepository(db_session), embedding_client=embeddings, session=db_session
+    )
+
+    article = await service.ingest_article(org.id, "Tarifas", "contenido estable")
+    [old_chunk] = await _chunks_of(db_session, article.id)
+    await service.ingest_article(org.id, "Tarifas", "contenido estable", force=True)
+
+    [new_chunk] = await _chunks_of(db_session, article.id)
+    assert embeddings.embedded_texts == 2
+    assert new_chunk.id != old_chunk.id
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_leaves_the_existing_article_untouched(db_session):
+    org = await create_organization(db_session)
+    article = await _service(db_session).ingest_article(org.id, "Tarifas", "version vieja")
+
+    broken = RAGService(
+        repository=KBRepository(db_session),
+        embedding_client=FailingEmbeddingClient(),
+        session=db_session,
+    )
+    with pytest.raises(RuntimeError):
+        await broken.ingest_article(org.id, "Tarifas", "version nueva")
+
+    # Los embeddings se calculan antes de tocar la base: el articulo sigue
+    # con su contenido y chunks anteriores, no vaciado a medias.
+    await db_session.refresh(article)
+    assert article.content == "version vieja"
+    [chunk] = await _chunks_of(db_session, article.id)
+    assert chunk.content == "version vieja"

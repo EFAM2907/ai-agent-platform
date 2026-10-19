@@ -94,9 +94,29 @@ class LiteLLMProvider(LLMProvider):
         drop_params aca a proposito -- mismo principio que el resto
         del gateway: un parametro no soportado en una llamada de chat
         debe fallar fuerte, no ignorarse en silencio."""
-        if request.reasoning_effort is None:
-            return None
-        return {"reasoning_effort": request.reasoning_effort}
+        body: dict = {}
+        if request.reasoning_effort is not None:
+            body["reasoning_effort"] = request.reasoning_effort
+
+        # Trazabilidad: LiteLLM entrega `metadata` a sus callbacks (Langfuse)
+        # y NO la reenvia al proveedor del modelo. Sin esto, cada llamada
+        # llegaba a Langfuse suelta, sin tenant, usuario ni sesion.
+        metadata: dict = {}
+        if request.trace_id:
+            metadata["trace_id"] = request.trace_id
+        if request.session_id:
+            metadata["session_id"] = request.session_id
+        if request.user_id:
+            metadata["trace_user_id"] = request.user_id
+        if request.request_tag:
+            metadata["generation_name"] = request.request_tag
+        if request.tenant_id:
+            metadata["tenant_id"] = request.tenant_id
+            metadata["tags"] = [f"tenant:{request.tenant_id}"]
+        if metadata:
+            body["metadata"] = metadata
+
+        return body or None
 
     @staticmethod
     def _to_api_message(message: Message) -> dict:

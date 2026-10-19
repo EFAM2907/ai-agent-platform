@@ -1,11 +1,24 @@
 import type {
   ChatReply,
+  PendingAction,
   ChatSession,
   ChatSessionSummary,
+  DrivePreview,
+  DriveStatus,
+  DriveSyncSummary,
   GmailPollResult,
   GmailStatus,
   GmailUnresolvedList,
+  KBDocument,
+  KBDocumentList,
+  KBSearchResponse,
+  KBStats,
+  KBUploadResponse,
   Organization,
+  TraceDetail,
+  TraceList,
+  TraceStats,
+  TraceSummaryLite,
   UserProfile,
 } from "./types";
 
@@ -54,10 +67,27 @@ export function clearTokens(): void {
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
+// FastAPI responde `detail` como texto en los errores de negocio, pero como
+// una LISTA de objetos {loc, msg} en los 422 de validacion -- mostrarla tal
+// cual daba "[object Object]".
+function formatDetail(detail: unknown, status: number): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((item) => {
+        const field = Array.isArray(item?.loc) ? item.loc[item.loc.length - 1] : null;
+        const message = typeof item?.msg === "string" ? item.msg : "valor inválido";
+        return field && field !== "body" ? `${field}: ${message}` : message;
+      })
+      .join(" · ");
+  }
+  return `Request failed (${status})`;
+}
+
 async function parseErrorDetail(response: Response): Promise<string> {
   try {
     const body = await response.json();
-    return body?.detail ?? `Request failed (${response.status})`;
+    return formatDetail(body?.detail, response.status);
   } catch {
     return `Request failed (${response.status})`;
   }
@@ -106,11 +136,14 @@ async function authedRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new SessionExpiredError(401, "No hay sesión activa");
   }
 
+  // Con FormData (subida de archivos) NO se fija Content-Type: el navegador
+  // lo pone con el boundary correcto; forzar JSON rompe el multipart.
+  const isForm = init?.body instanceof FormData;
   const doFetch = (token: string) =>
     fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
-        "Content-Type": "application/json",
+        ...(isForm ? {} : { "Content-Type": "application/json" }),
         Authorization: `Bearer ${token}`,
         ...(init?.headers ?? {}),
       },
@@ -180,10 +213,15 @@ export async function sendChatMessage(
 }
 
 export type ChatStreamEvent =
-  | { type: "start"; data: { session_id: string; sources: string[] } }
+  | { type: "start"; data: { session_id: string; sources: string[]; trace_id: string } }
+  | { type: "tool"; data: { name: string; phase: "start" | "end"; ok: boolean | null } }
+  | {
+      type: "confirmation_required";
+      data: { action: { id: string; tool_name: string; arguments: Record<string, unknown>; expires_at: string } };
+    }
   | { type: "delta"; data: { content: string } }
-  | { type: "done"; data: { message_id: string; created_at: string } }
-  | { type: "error"; data: { detail: string } };
+  | { type: "done"; data: { message_id: string; created_at: string; trace: TraceSummaryLite } }
+  | { type: "error"; data: { detail: string; trace_id?: string } };
 
 // No usa EventSource nativo a proposito: EventSource solo hace GET y no
 // permite mandar el header Authorization, y esta API es Bearer-token,
@@ -191,7 +229,11 @@ export type ChatStreamEvent =
 // ReadableStream, con el mismo patron de refresh-en-401 que
 // authedRequest (que no se puede reusar tal cual porque authedRequest
 // espera .json() al final, no un stream).
-async function doStreamRequest(token: string, body: unknown): Promise<Response> {
+async function doStreamRequest(
+  token: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<Response> {
   return fetch(`${API_BASE}/chat/messages/stream`, {
     method: "POST",
     headers: {
@@ -199,12 +241,14 @@ async function doStreamRequest(token: string, body: unknown): Promise<Response> 
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
 export async function* streamChatMessage(
   message: string,
   sessionId: string | null,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatStreamEvent> {
   const accessToken = getAccessToken();
   if (!accessToken) {
@@ -212,11 +256,11 @@ export async function* streamChatMessage(
   }
 
   const body = { session_id: sessionId, message };
-  let response = await doStreamRequest(accessToken, body);
+  let response = await doStreamRequest(accessToken, body, signal);
 
   if (response.status === 401) {
     const newAccessToken = await refreshAccessToken();
-    response = await doStreamRequest(newAccessToken, body);
+    response = await doStreamRequest(newAccessToken, body, signal);
   }
 
   if (!response.ok || !response.body) {
@@ -254,6 +298,19 @@ export async function* streamChatMessage(
       boundary = buffer.indexOf("\n\n");
     }
   }
+}
+
+// Aprobar/rechazar una accion destructiva que el agente pidio. Va con tu
+// sesion normal: el token delegado del agente no puede hacerlo.
+export async function decidePendingAction(
+  actionId: string,
+  decision: "approve" | "reject",
+): Promise<PendingAction> {
+  return authedRequest<PendingAction>(`/chat/actions/${actionId}/${decision}`, { method: "POST" });
+}
+
+export async function listPendingActions(sessionId: string): Promise<PendingAction[]> {
+  return authedRequest<PendingAction[]>(`/chat/actions/pending?session_id=${sessionId}`);
 }
 
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
@@ -320,4 +377,117 @@ export async function pollGmailNow(): Promise<GmailPollResult> {
 
 export async function listUnresolvedGmail(): Promise<GmailUnresolvedList> {
   return authedRequest<GmailUnresolvedList>("/gmail/unresolved?limit=20");
+}
+
+// -- Chat: valoracion y traza --
+
+export async function setMessageFeedback(
+  messageId: string,
+  rating: 1 | -1 | null,
+  comment?: string,
+): Promise<{ message_id: string; rating: number | null; comment: string | null }> {
+  return authedRequest(`/chat/messages/${messageId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ rating, comment: comment ?? null }),
+  });
+}
+
+export async function getMessageTrace(messageId: string): Promise<TraceDetail> {
+  return authedRequest<TraceDetail>(`/chat/messages/${messageId}/trace`);
+}
+
+// -- Trazabilidad (ADMIN/OWNER) --
+
+export async function listTraces(params: {
+  status?: "ok" | "error";
+  skip?: number;
+  limit?: number;
+}): Promise<TraceList> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  query.set("skip", String(params.skip ?? 0));
+  query.set("limit", String(params.limit ?? 25));
+  return authedRequest<TraceList>(`/chat/traces?${query.toString()}`);
+}
+
+export async function getTrace(id: string): Promise<TraceDetail> {
+  return authedRequest<TraceDetail>(`/chat/traces/${id}`);
+}
+
+export async function getTraceStats(days: number): Promise<TraceStats> {
+  return authedRequest<TraceStats>(`/chat/traces/stats?days=${days}`);
+}
+
+// -- Base de conocimiento --
+
+export async function getKbStats(): Promise<KBStats> {
+  return authedRequest<KBStats>("/kb/stats");
+}
+
+export async function listKbDocuments(params: {
+  source?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<KBDocumentList> {
+  const query = new URLSearchParams();
+  if (params.source) query.set("source_type", params.source);
+  query.set("skip", String(params.skip ?? 0));
+  query.set("limit", String(params.limit ?? 50));
+  return authedRequest<KBDocumentList>(`/kb/documents?${query.toString()}`);
+}
+
+export async function uploadKbDocument(file: File, accessLevel: string): Promise<KBUploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("access_level", accessLevel);
+  return authedRequest<KBUploadResponse>("/kb/documents", { method: "POST", body: form });
+}
+
+export async function updateKbDocumentAccess(id: string, accessLevel: string): Promise<KBDocument> {
+  return authedRequest<KBDocument>(`/kb/documents/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ access_level: accessLevel }),
+  });
+}
+
+export async function deleteKbDocument(id: string): Promise<void> {
+  await authedRequest<void>(`/kb/documents/${id}`, { method: "DELETE" });
+}
+
+export async function searchKb(query: string, topK = 5): Promise<KBSearchResponse> {
+  return authedRequest<KBSearchResponse>("/kb/search", {
+    method: "POST",
+    body: JSON.stringify({ query, top_k: topK }),
+  });
+}
+
+// -- Google Drive (ADMIN/OWNER) --
+
+export async function getDriveStatus(): Promise<DriveStatus> {
+  return authedRequest<DriveStatus>("/drive/status");
+}
+
+export async function getDriveAuthorizationUrl(): Promise<{ authorization_url: string }> {
+  return authedRequest<{ authorization_url: string }>("/drive/connect");
+}
+
+export async function setDriveFolder(folder: string): Promise<DriveStatus> {
+  return authedRequest<DriveStatus>("/drive/folder", {
+    method: "PUT",
+    body: JSON.stringify({ folder }),
+  });
+}
+
+export async function previewDriveSync(): Promise<DrivePreview> {
+  return authedRequest<DrivePreview>("/drive/preview");
+}
+
+export async function syncDrive(): Promise<DriveSyncSummary> {
+  return authedRequest<DriveSyncSummary>("/drive/sync", { method: "POST" });
+}
+
+export async function disconnectDrive(removeDocuments: boolean): Promise<void> {
+  await authedRequest<void>(`/drive/connection?remove_documents=${removeDocuments}`, {
+    method: "DELETE",
+  });
 }

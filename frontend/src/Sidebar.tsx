@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatSessionSummary, GmailStatus, Organization, UserProfile } from "./types";
+import type { ChatSessionSummary, DriveStatus, GmailStatus, Organization, UserProfile } from "./types";
 import { RobotIcon } from "./RobotIcon";
+
+export type AppView = "chat" | "knowledge" | "integrations" | "traces";
 
 interface SidebarProps {
   platformName: string;
@@ -18,12 +20,14 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void;
   onLogout: () => void;
   onChangePassword: () => void;
-  // null: no se pudo consultar (rol sin permiso, o todavia no cargo) --
-  // mismo criterio que members===null. canManageIntegrations es quien
-  // decide si vale la pena mostrar el estado real o el texto generico.
+  // Estado de las integraciones, solo para el punto de color del menu.
+  // null = no se pudo consultar (rol sin permiso, o todavia no cargo).
   gmailStatus: GmailStatus | null;
-  canManageIntegrations: boolean;
-  onOpenGmail: () => void;
+  driveStatus: DriveStatus | null;
+  view: AppView;
+  onChangeView: (view: AppView) => void;
+  // ADMIN/OWNER ven las secciones de administracion.
+  isAdmin: boolean;
 }
 
 function formatSessionLabel(session: ChatSessionSummary): string {
@@ -54,8 +58,10 @@ export function Sidebar({
   onLogout,
   onChangePassword,
   gmailStatus,
-  canManageIntegrations,
-  onOpenGmail,
+  driveStatus,
+  view,
+  onChangeView,
+  isAdmin,
 }: SidebarProps) {
   const canSeeMembers = members !== null;
 
@@ -150,47 +156,50 @@ export function Sidebar({
         </div>
       )}
 
-      <div className="sidebar__stats">
-        <div className="sidebar__stat">
-          <div className="sidebar__stat-value">{canSeeMembers ? members!.length : "—"}</div>
-          <div className="sidebar__stat-label">Usuarios activos</div>
-        </div>
-        <div className="sidebar__stat">
-          <div className="sidebar__stat-value">2</div>
-          <div className="sidebar__stat-label">Integraciones</div>
-        </div>
-      </div>
-
-      <div className="sidebar__section">
-        <div className="sidebar__section-title">Integraciones</div>
-        {/* Slack sigue siendo decorativo a proposito -- no existe todavia
-            un modelo de esa integracion en el backend. Email si es real:
-            Gmail esta completo (app/gmail/), asi que este ya refleja el
-            estado de verdad en vez de simular data. */}
-        <div className="sidebar__integration-row">
-          <span className="sidebar__integration-dot sidebar__integration-dot--ok" />
-          Slack
-        </div>
-        {canManageIntegrations ? (
-          <button
-            type="button"
-            className="sidebar__integration-row sidebar__integration-row--btn"
-            onClick={onOpenGmail}
-          >
-            <span
-              className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
-            />
-            {gmailStatus?.connected ? `Email · ${gmailStatus.google_email}` : "Email · conectar"}
-          </button>
-        ) : (
-          <div className="sidebar__integration-row">
-            <span
-              className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
-            />
-            Email
-          </div>
+      <nav className="sidebar__nav" aria-label="Secciones">
+        <button
+          type="button"
+          className={`sidebar__nav-item${view === "chat" ? " sidebar__nav-item--active" : ""}`}
+          onClick={() => onChangeView("chat")}
+        >
+          Chat
+        </button>
+        {isAdmin && (
+          <>
+            <button
+              type="button"
+              className={`sidebar__nav-item${view === "knowledge" ? " sidebar__nav-item--active" : ""}`}
+              onClick={() => onChangeView("knowledge")}
+            >
+              Base de conocimiento
+            </button>
+            <button
+              type="button"
+              className={`sidebar__nav-item${view === "integrations" ? " sidebar__nav-item--active" : ""}`}
+              onClick={() => onChangeView("integrations")}
+            >
+              Integraciones
+              <span className="sidebar__nav-dots" aria-hidden="true">
+                <span
+                  className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+                  title={gmailStatus?.connected ? "Gmail conectado" : "Gmail sin conectar"}
+                />
+                <span
+                  className={`sidebar__integration-dot${driveStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+                  title={driveStatus?.connected ? "Drive conectado" : "Drive sin conectar"}
+                />
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`sidebar__nav-item${view === "traces" ? " sidebar__nav-item--active" : ""}`}
+              onClick={() => onChangeView("traces")}
+            >
+              Trazabilidad
+            </button>
+          </>
         )}
-      </div>
+      </nav>
 
       {canSeeMembers && (
         <div className="sidebar__section">

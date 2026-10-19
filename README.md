@@ -6,15 +6,16 @@ usuarios/envíos. Tenant de referencia: **Inter Rapidísimo** (mensajería/logí
 ## Qué hace
 
 - Agente de chat conversacional (streaming por SSE) que puede:
-  - responder preguntas apoyándose en la knowledge base de la empresa vía RAG (pgvector), indexada desde markdown, PDF o Excel
-  - consultar y actualizar el estado de envíos/clientes
+  - responder preguntas apoyándose en la knowledge base de la empresa vía RAG (pgvector + búsqueda por palabras clave fusionadas con RRF, con filtro de relevancia y acceso por rol), indexada desde markdown, PDF, Excel o Word, subida por la API o sincronizada desde una carpeta de Google Drive
+  - consultar y actualizar el estado de envíos/clientes, dar de alta clientes y envíos, ver los envíos demorados según la política, abrir y seguir reclamos y avisar al cliente por correo
   - invitar, listar, actualizar, eliminar y cambiar el rol de usuarios de la organización, vía el servidor MCP (que reenvía a la API REST con el mismo Bearer token del usuario), con exactamente las mismas reglas de autorización que llamar la API REST directo
   - enrutar automáticamente cada turno entre un modelo barato y uno caro según la complejidad del mensaje
 - API REST completa para usuarios y envíos/clientes, y un servidor MCP propio (FastMCP) que expone las mismas operaciones por el protocolo MCP estándar, no solo para este chat — ver [`docs/roadmap.md`](docs/roadmap.md#2-construir-un-mcp-propio-con-fastmcp).
 - Aislamiento multi-tenant estricto por organización, con RBAC (`OWNER > ADMIN > MEMBER > VIEWER`) reforzado tanto en la API REST como en las tools de chat.
 - Gateway LLM propio (LiteLLM self-hosted) que centraliza ruteo, fallback entre proveedores, reintentos y presupuesto por tenant — la app nunca habla directo con Anthropic/OpenAI/Google.
 - Integración con Gmail (OAuth por organización): responde automáticamente preguntas de tracking que lleguen por correo, y envía el correo de bienvenida (rol + contraseña temporal) cuando se invita a un usuario desde el chat.
-- Frontend en React con tema oscuro: chat, historial de conversaciones (renombrar/eliminar), gestión de miembros.
+- Trazabilidad por turno: cada respuesta guarda qué modelo la generó, qué fragmentos de la base de conocimiento usó, qué herramientas ejecutó y cuánto tardó, con valoración 👍/👎 del usuario; los administradores ven el listado y las estadísticas.
+- Frontend en React con tema oscuro: chat (fuentes, estado de herramientas en vivo, detalle de cada respuesta), historial de conversaciones, y para administradores la base de conocimiento, las integraciones (Gmail, Google Drive) y la trazabilidad.
 
 ## Stack
 
@@ -27,7 +28,7 @@ usuarios/envíos. Tenant de referencia: **Inter Rapidísimo** (mensajería/logí
 ## Arquitectura (resumen)
 
 Dominios independientes bajo `app/`: `organizations`, `users`, `auth`,
-`chat`, `llm`, `rag`, `shipments`, `gmail`. Cada uno con su propio
+`chat`, `llm`, `rag`, `shipments`, `claims`, `gmail`, `drive`. Cada uno con su propio
 `models.py`, `repository.py`, `service.py`, `schemas.py`, y (cuando aplica)
 `api.py`. Las tools de usuarios/envíos que el chat ofrece al LLM
 (`app/chat/mcp_tools.py`) ya no son función calling in-process: son un

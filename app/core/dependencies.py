@@ -1,28 +1,59 @@
-from fastapi import Depends, HTTPException
+import logging
+
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
+from app.core.sts import decode_delegated_token, is_delegated_token
 from app.core.exceptions import InvalidTokenError
 from app.users.repository import UserRepository
 from app.users.models import User, UserRole, ROLE_HIERARCHY
 from uuid import UUID
 import uuid
 
+logger = logging.getLogger(__name__)
+
 security = HTTPBearer()
+
+# Un token delegado (aud=mcp-server) solo existe para que el MCP server
+# actue en nombre del usuario sobre las rutas de negocio: no puede
+# abrir sesiones de chat (el agente llamandose a si mismo) ni tocar
+# /auth.
+_DELEGATED_FORBIDDEN_PREFIXES = ("/chat", "/auth")
 
 
 async def get_current_user(
+    request: Request,
     auth: HTTPAuthorizationCredentials = Depends(security),
     session: AsyncSession = Depends(get_db)
 ) -> User:
     token = auth.credentials
     try:
-        dec_token = decode_access_token(token)
+        if is_delegated_token(token):
+            if request.url.path.startswith(_DELEGATED_FORBIDDEN_PREFIXES):
+                raise HTTPException(status_code=403, detail="Delegated token not allowed here")
+            dec_token = decode_delegated_token(token)
+        else:
+            dec_token = decode_access_token(token)
     except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
+
+    # Quien actua y con que token: lo usa la auditoria (actor != sujeto
+    # cuando el que llama es el agente en nombre del usuario).
+    request.state.token_claims = dec_token
+    if dec_token.get("act"):
+        logger.info(
+            "delegated_call actor=%s sub=%s jti=%s approved_action=%s %s %s",
+            dec_token["act"].get("sub"),
+            dec_token.get("sub"),
+            dec_token.get("jti"),
+            dec_token.get("approved_action"),
+            request.method,
+            request.url.path,
+        )
+
     sub = dec_token.get('sub')
     if not sub:
         raise HTTPException(status_code=401, detail="Invalid token payload")
@@ -41,20 +72,6 @@ async def get_current_user(
         
     return user
 
-
-
-async def get_bearer_token(
-    auth: HTTPAuthorizationCredentials = Depends(security),
-) -> str:
-    """El JWT crudo del request, sin decodificar -- lo necesita
-    ChatService para abrir su sesion MCP contra mcp_server/ (ver
-    app.chat.mcp_tools.open_mcp_tools), que reenvia este mismo token a
-    la API REST en nombre del usuario, igual que ya hace cualquier otro
-    cliente MCP (ver mcp_server/server.py). Depends(security) ya quedo
-    cacheado por FastAPI dentro de este mismo request si la ruta
-    tambien depende de get_current_user -- no vuelve a parsear el
-    header Authorization dos veces."""
-    return auth.credentials
 
 
 async def require_admin(

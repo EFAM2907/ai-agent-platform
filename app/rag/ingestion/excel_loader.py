@@ -31,6 +31,16 @@ def _is_blank_row(row: tuple[Any, ...]) -> bool:
 class ExcelLoader:
     def load(self, path: Path) -> list[IngestedDocument]:
         workbook = load_workbook(str(path), data_only=True, read_only=True)
+        try:
+            return self._read_sheets(path, workbook)
+        finally:
+            # En modo read_only openpyxl mantiene el archivo abierto hasta
+            # close(): en Windows eso bloquea borrar/mover el archivo (y
+            # en cualquier SO fuga un descriptor por cada archivo leido).
+            workbook.close()
+
+    @staticmethod
+    def _read_sheets(path: Path, workbook) -> list[IngestedDocument]:
         documents: list[IngestedDocument] = []
 
         for sheet in workbook.worksheets:

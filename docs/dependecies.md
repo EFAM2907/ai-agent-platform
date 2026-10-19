@@ -1,8 +1,15 @@
 # Dependencias del Proyecto — AI Agent Platform
 
-Documento de referencia con las librerías instaladas, para qué sirve cada una, y cómo se están usando concretamente en el proyecto. Cubre los dominios `organizations`, `users`, `auth`, `chat`, `llm`, `rag` y `shipments`.
+Documento de referencia con las librerías instaladas, para qué sirve cada una, y cómo se están usando concretamente en el proyecto. Cubre los dominios `organizations`, `users`, `auth`, `chat`, `llm`, `rag`, `shipments`, `claims`, `gmail` y `drive`, más el servidor MCP (`mcp_server/`) y el frontend (`frontend/`).
 
-Última actualización: correspondiente al estado actual del proyecto tras agregar el gateway LLM (LiteLLM), RAG sobre una knowledge base con pgvector (incluyendo el pipeline de ingestión multi-formato — markdown, PDF, Excel — en `app/rag/ingestion/`), el agente de chat con tool-calling (streaming y no-streaming) sobre gestión de usuarios y consulta/actualización de envíos y clientes, el flujo de invitación de usuarios con contraseña temporal (`must_change_password`), la API REST de envíos/clientes (`app/shipments/api.py`, antes solo existía para `app/users/`), un servidor MCP propio con FastMCP (`mcp_server/`) que expone las mismas 10 tools por el protocolo MCP estándar, la migración del agente de chat para que sea cliente de ese servidor MCP en vez de llamar las tools in-process (`app.chat.mcp_tools` — reemplazó a `app.users.tools`/`app.shipments.tools`, que se borraron), un scheduler para la ingestión del RAG (`scripts/run_kb_ingestion_scheduler.py`, antes 100% manual) y un harness de evaluación de RAG con métricas de retrieval/faithfulness (`eval_harness/rag_eval.py`, antes solo existía para el `ModelRouter`), y la suite de tests (antes marcada como pendiente — ya está instalada y en uso activo).
+Última actualización: octubre de 2026, tras cerrar la etapa de RAG, trazabilidad, herramientas MCP e integraciones. Lo que cambió respecto a la versión anterior de este documento:
+
+- **RAG**: búsqueda híbrida (vectorial + palabras clave de Postgres, fusionadas con RRF), filtro de relevancia, índice HNSW, metadatos de origen/versión/acceso por documento, sincronización de fuentes (carpeta local, subida por API, Google Drive) con poda de lo que desaparece, y soporte de Word (`.docx`) además de md/pdf/xlsx. Ver sección 7.
+- **Trazabilidad**: una traza por turno de chat guardada en la base de datos, `trace_id`/sesión/usuario/tenant enviados al gateway (Langfuse), valoración 👍/👎 por respuesta y vistas de administración. Ver sección 6.3.
+- **Dominio de negocio**: reclamos (`app/claims/`), alta de clientes y envíos, historial, estadísticas, envíos demorados según la política de la KB y aviso por correo al cliente. Ver sección 6.4.
+- **MCP**: de 10 a 30 herramientas, filtradas por rol en el chat. Ver sección 6.2.
+- **Integraciones**: Gmail (propio, multi-organización) y Google Drive (solo lectura), ambas expuestas por nuestro MCP. Ver sección 13.
+- **Frontend**: navegación por vistas (chat, base de conocimiento, integraciones, trazabilidad), markdown real, estado de herramientas en vivo y detalle de cada respuesta. Ver sección 14.
 
 ---
 
@@ -57,7 +64,7 @@ Extensión de PostgreSQL + tipo `Vector` para SQLAlchemy. Almacena los embedding
 ### `alembic`
 Herramienta de migraciones. Configurado con el driver síncrono (`psycopg2`) porque Alembic no soporta drivers async de forma nativa en su configuración estándar — `migrations/env.py` reescribe la URL de `postgresql+asyncpg://` a `postgresql+psycopg2://` en tiempo de ejecución.
 
-**Cadena de migraciones actual** (`alembic heads` debe dar un único head): organizations → refresh_tokens → roles/platform admin → users → email único activo → RAG (pgvector) → chat → shipments → `must_change_password`.
+**Cadena de migraciones actual** (`alembic heads` debe dar un único head): organizations → refresh_tokens → roles/platform admin → users → email único activo → LiteLLM virtual key → RAG (pgvector) → chat → shipments → `must_change_password` → tablas de Gmail (`c9d4e7a1b2f3`) → búsqueda de texto completo en `kb_chunks` (`d2e5f8a1b3c4`) → metadatos de origen/versión/acceso e índice HNSW (`e3f6a9b2c5d7`) → trazas y feedback de chat (`f5b8c1d4e7a9`) → reclamos y notificaciones (`a7d0e3f6b9c1`) → extensión `unaccent` (`b8e1f4a7c0d2`) → conexiones de Drive (`c0a3d6e9f2b4`, head actual).
 
 - **Restricciones complejas aplicadas vía Alembic:**
   - `ix_users_email_unique_active` / `ix_shipments_tracking_number_unique_active`: índices únicos parciales que solo aplican a filas activas (`deleted_at IS NULL`) — permiten reutilizar un email o un tracking number si la fila anterior fue borrada lógicamente.
@@ -144,7 +151,7 @@ Cliente HTTP usado para hablar con el gateway **LiteLLM**, no directamente con O
 ### LiteLLM (servicio Docker, no una librería Python)
 Gateway self-hosted (`ghcr.io/berriai/litellm:v1.83.10-stable`, versión pineada tras un incidente de supply-chain) que centraliza el ruteo/fallback entre proveedores (`litellm_config.yaml`), aplica presupuesto y aislamiento por tenant vía virtual keys, y loguea trazas a Langfuse.
 
-**Modelos configurados hoy:** `gemini-3.6-flash` (barato), `claude-sonnet-5` (caro — actualmente apuntado *temporalmente* a `gemini-3.6-flash` en `app/chat/service.py` mientras Anthropic/OpenAI no tienen crédito real, ver sección 9), `claude-haiku-4-5`, `gpt-5.6-luna`, `gemini-embedding`, y `deepseek-chat` (proveedor DeepSeek vía su API, prepago sin free tier, agregado como segundo fallback barato para el par `gemini-3.1-flash-lite`/`gemini-3.5-flash-lite` — el problema que resuelve es el rate-limit por RPM de Gemini, no precio). Fallbacks configurados para `gemini-3.6-flash`, `claude-sonnet-5` (evitando caer primero en `claude-haiku-4-5`, que comparte la misma API key de Anthropic), y el par flash-lite (que cae en su hermano y luego en `deepseek-chat` antes de escalar a proveedores sin crédito).
+**Modelos configurados hoy:** `gemini-3.6-flash`, `claude-sonnet-5`, y para el chat los dos niveles *temporales* `CHEAP_MODEL = gemini-3.1-flash-lite` / `EXPENSIVE_MODEL = gemini-3.5-flash-lite` (`app/chat/service.py`, a revertir a modelos reales cuando Anthropic/OpenAI tengan crédito, ver sección 9), `claude-haiku-4-5`, `gpt-5.6-luna`, `gemini-embedding`, y `deepseek-chat` (proveedor DeepSeek vía su API, prepago sin free tier, agregado como segundo fallback barato para el par `gemini-3.1-flash-lite`/`gemini-3.5-flash-lite` — el problema que resuelve es el rate-limit por RPM de Gemini, no precio). Fallbacks configurados para `gemini-3.6-flash`, `claude-sonnet-5` (evitando caer primero en `claude-haiku-4-5`, que comparte la misma API key de Anthropic), y el par flash-lite (que cae en su hermano y luego en `deepseek-chat` antes de escalar a proveedores sin crédito).
 
 - **Reintentos: responsabilidad exclusiva de LiteLLM** (`router_settings.num_retries`), no de la app — `LLMClient` ya no reintiene nada por su cuenta. Antes reintentaba también él mismo, lo que bajo rate-limit sostenido significaba `app_retries × litellm_retries` llamadas reales por una sola generación (incidente real: ~170s de espera para una consulta simple).
 - Virtual keys por tenant (`app.llm.litellm_admin`): una por organización, aprovisionada en background al registrarse (`BackgroundTasks`), más una de emergencia (budget diario bajo, un solo modelo) para tenants sin la propia todavía, y una separada para `eval_harness/`.
@@ -160,9 +167,14 @@ Clasifica cada mensaje como barato/caro con una llamada al modelo barato (`route
 
 ### Tools expuestas al agente de chat hoy
 
-**Usuarios** (`app/users/tools.py`, jerarquía de roles vía `ROLE_HIERARCHY`, aislamiento multi-tenant): `create_user` (ADMIN/OWNER, genera contraseña temporal, un ADMIN no puede crear otro ADMIN, nunca OWNER), `list_users` (ADMIN/OWNER), `get_user` (self-service o ADMIN/OWNER), `update_user` (self-service o outranking — nunca contraseña, ver más abajo), `delete_user` (outranking, un OWNER no puede autoeliminarse), `change_user_role` (ADMIN/OWNER, outranking, nunca asigna OWNER). Cada handler reaplica exactamente las mismas reglas que la API REST — llamar una tool desde el chat nunca hace nada que el usuario no pudiera hacer llamando la API directo.
+Ya no son funciones in-process: las anuncia el servidor MCP (sección 6.2) y cada una reenvía a la API REST con el Bearer token del usuario, así que corre con exactamente las mismas reglas de autorización que llamar la API directo. El chat solo le ofrece al modelo las que el rol del usuario puede usar (`app/chat/tool_access.py`: un viewer ve ~11, un member ~18, un admin las 30 — unos 1.100, 2.200 y 3.100 tokens de esquema por llamada).
 
-**Envíos y clientes** (`app/shipments/tools.py`): `list_shipments`, `get_shipment_status`, `list_customers` (sin restricción de rol — datos de negocio del tenant, no cuentas de plataforma) y `update_shipment_status` (cualquier rol excepto VIEWER — es una operación logística rutinaria, no administración de cuenta; actualiza `Shipment.status` y agrega el `ShipmentEvent` correspondiente en la misma transacción).
+- **Usuarios** (ADMIN/OWNER): `create_user`, `list_users`, `get_user`, `update_user`, `delete_user`, `change_user_role`.
+- **Envíos y clientes**: `list_shipments` (filtros por estado, servicio, cliente, ciudad y `q`), `get_shipment_status`, `get_shipment_history`, `shipment_stats`, `list_delayed_shipments`, `list_customers` (búsqueda sin tildes), `get_customer` (lectura, cualquier rol); `create_customer`, `update_customer`, `create_shipment`, `update_shipment_status`, `notify_shipment_customer` (cualquier rol excepto VIEWER).
+- **Reclamos**: `list_claims`, `get_claim` (lectura); `open_claim`, `update_claim_status` (excepto VIEWER).
+- **Base de conocimiento**: `search_knowledge_base` (cualquier rol, respeta el acceso por rol de cada documento); `list_kb_documents` (ADMIN/OWNER).
+- **Integraciones** (ADMIN/OWNER): `gmail_status`, `list_unresolved_emails`, `poll_gmail_now`, `drive_status`, `sync_drive`.
+- **Contexto**: `whoami`.
 
 ### 6.1. API REST de envíos (`app/shipments/api.py`)
 
@@ -176,7 +188,7 @@ Hasta hace poco `app/shipments/` solo existía como tools de chat, sin equivalen
 
 ### 6.2. Servidor MCP propio (`mcp_server/`), y el chat como su cliente (`app/chat/mcp_tools.py`)
 
-Servidor [FastMCP](https://github.com/jlowin/fastmcp) (`transport="streamable-http"`) que expone las mismas 10 operaciones de usuarios y envíos por el protocolo MCP estándar — ver `docs/roadmap.md` sección 2 para el por qué.
+Servidor [FastMCP](https://github.com/jlowin/fastmcp) (`transport="streamable-http"`) que expone 30 operaciones (usuarios, clientes, envíos, reclamos, base de conocimiento, Gmail y Drive) por el protocolo MCP estándar — ver `docs/roadmap.md` sección 2 para el por qué. Cada herramienta nueva exige registrarse en `TOOL_MIN_ROLE` (`app/chat/tool_access.py`); `tests/test_tool_access.py` falla si el servidor anuncia una herramienta sin rol mínimo (y una no registrada solo se ofrece a ADMIN/OWNER).
 
 Diseño de **proxy delgado**: cada `@mcp.tool` (`mcp_server/server.py`) reenvía la llamada como un request HTTP normal a la API REST que ya existe (`app.users.api`, `app.shipments.api`), reusando el mismo Bearer token que el cliente MCP ya trae (`get_http_headers()` de `fastmcp.server.dependencies`). Dos ganancias de esa decisión: el contenedor del servicio queda liviano (solo `fastmcp`+`httpx` — sin SQLAlchemy/asyncpg/cryptography, lo más pesado de la imagen de la API principal), y la identidad del usuario cruza el proceso gratis — la API principal valida el token exactamente igual que a cualquier otro cliente, sin lógica de autorización propia duplicada en este servidor. Un error de negocio (401/403/404 de la API) se traduce a `{"error": ..., "status_code": ...}` en vez de tumbar la tool call.
 
@@ -186,6 +198,25 @@ Limitación a propósito: solo soporta `streamable-http`, no `stdio` — `get_ht
 
 Consecuencia real de este cambio: `mcp-server` pasa de ser opcional a ser una dependencia dura del chat — si no está levantado, ninguna conversación con tools funciona (ni una que no termine llamando ninguna, porque la lista de tools se pide al abrir la sesión). También significa que el `requirements.txt` raíz **ya no está libre de `fastmcp`**: ahora instala `fastmcp-slim` (la variante sin extras de servidor — el cliente no necesita `cyclopts`/`uvicorn`-para-CLI/etc. que sí carga `mcp_server/requirements.txt` del lado del servidor) para poder importar `fastmcp.client`. Se verificó una instalación combinada real contra los pines existentes (`starlette==1.6.0`, `uvicorn==0.52.3`, `pydantic==2.13.4`, etc.): todos satisfacen las cotas mínimas que pide `mcp==2.2.0`/`fastmcp-slim==4.0.10`, así que ninguno de los pines pre-existentes subió de versión — solo se agregaron los paquetes nuevos (`mcp`, `mcp-types`, `Authlib`, `opentelemetry-api`, `py-key-value-aio` y sus dependencias, etc.).
 
+### 6.3. Trazabilidad de cada turno (`app/chat/tracing.py`)
+
+Hasta ahora Langfuse recibía llamadas sueltas del gateway: `tenant_id` y `request_tag` del `LLMRequest` nunca se enviaban. Ahora:
+
+- **`TurnTracer`** junta, mientras el turno ocurre, qué modelo se eligió y por qué (`ModelRouter.decide()`), qué fragmentos de la KB entraron al contexto (id, título, score), cada llamada al modelo (tokens, latencia) y cada herramienta (nombre, argumentos **sin secretos**, éxito, duración, tamaño del resultado — nunca el resultado en sí). Implementa el protocolo `ToolLoopObserver` de `app/llm/tools.py`; un observer que falla nunca tumba el turno.
+- Se guarda **una fila por turno** en `chat_turn_traces`, también cuando el turno falla (`status="error"`), junto con la respuesta en una sola transacción. El mensaje del usuario se confirma antes de llamar al modelo (ya no se pierde si el turno falla).
+- `trace_id`, `session_id`, `user_id` y `tenant_id` viajan al gateway en `metadata` (`LiteLLMProvider._extra_body`), así Langfuse agrupa las llamadas del turno. Verificado en `LiteLLM_SpendLogs`: las llamadas de un turno comparten el `session_id` del chat.
+- Una falla de la búsqueda en la KB (cuota de embeddings) ya no tumba el chat: el turno sigue sin contexto y la traza lo registra.
+- API: `GET /chat/messages/{id}/trace` (quien recibió la respuesta y ADMIN/OWNER), `POST /chat/messages/{id}/feedback` (1 / -1 / null), y solo ADMIN/OWNER `GET /chat/traces`, `/chat/traces/stats` y `/chat/traces/{id}`.
+- **Límite conocido**: el costo en dólares no se guarda en la traza local (`cost_usd` queda en `null`); LiteLLM lo calcula y se ve en Langfuse. La traza local guarda tokens y latencias.
+- Si el cliente corta la conexión a mitad de una respuesta en streaming, el servidor cancela el turno y no guarda ni respuesta ni traza.
+
+### 6.4. Dominio de negocio: clientes, envíos y reclamos
+
+- **Reclamos** (`app/claims/`): número `CLM-AAAA-NNNNNN` consecutivo por organización, tipo (daño, pérdida, retraso, cobro incorrecto, entrega no autorizada — los códigos REC-01..05 de la KB), SLA en días hábiles según el tipo, ciclo `abierto → en_investigacion → resuelto → cerrado` (un resuelto puede reabrirse; cerrado es final; resolver exige explicar la resolución), historial de cada cambio y un solo reclamo activo por envío y tipo. Leer: cualquier rol; escribir: excepto VIEWER.
+- **Clientes y envíos**: alta y edición de clientes (correo y documento únicos por organización — el correo es lo que autoriza ver envíos por Gmail), alta de envíos con guía generada, regla de la KB de Same Day solo en la misma ciudad y Express no a zonas rurales, historial completo, filtros, estadísticas y búsquedas sin tildes (`unaccent`).
+- **Envíos demorados** (`app/shipments/delays.py`, `app/core/business_days.py`): la política de la KB (urbano 2/3 días hábiles, nacional 3/5, rural +2, más de 10 = extremo) aplicada a los datos reales. No incluye festivos.
+- **Aviso al cliente** (`POST /shipments/{guía}/notify`): el destinatario no es un parámetro (siempre el correo del cliente de ese envío), máximo 3 avisos por envío cada 24 horas, cada uno queda guardado.
+
 ---
 
 ## 7. RAG (Retrieval-Augmented Generation)
@@ -193,13 +224,19 @@ Consecuencia real de este cambio: `mcp-server` pasa de ser opcional a ser una de
 Sin librería de orquestación externa (LangChain, LlamaIndex, etc.) — implementado directo sobre `pgvector` + el gateway de embeddings.
 
 **Uso en el proyecto (`app/rag/`):**
-- `chunking.py`: parte un artículo de la KB en fragmentos.
-- `embeddings.py` (`EmbeddingClient`): un vector de 768 dimensiones por chunk, vía `gemini-embedding` en LiteLLM (mismo patrón que `LiteLLMProvider` pero contra `/embeddings`, no `/chat/completions`).
-- `service.py` (`RAGService.ingest_article`): crea el artículo, lo chunkea, embeddea y guarda todo en una sola transacción — nunca queda a medio indexar.
-- `RAGService.retrieve`: embeddea la pregunta del usuario y devuelve los `top_k` chunks más parecidos (distancia coseno) de la KB de esa organización, sin aplicar un umbral de relevancia (esa decisión es del caller).
-- Ingesta vía `scripts/ingest_kb_articles.py <organization_id> [--dir <tenant>]` — sin endpoint REST de ingesta. Soporta markdown, PDF y Excel en la misma carpeta (`app/rag/ingestion/`, ver `docs/roadmap.md` sección 3): un loader por formato normaliza cualquier fuente a `IngestedDocument`, y `registry.load_documents_from_dir` elige el loader por extensión, salteando con un warning lo que no sabe leer en vez de abortar toda la carpeta. Idempotente: `RAGService.ingest_article` hace upsert por `(organization_id, title)`, así que correr el script dos veces no duplica artículos.
-- Ya no es puramente manual: `scripts/run_kb_ingestion_scheduler.py` corre esa misma ingesta periódicamente (modo `--once` para cron del SO, o bucle continuo cada `kb_ingestion_poll_interval_seconds`), leyendo los pares `(organization_id, subcarpeta)` desde `kb_content/ingestion_schedule.yaml` (no versionado — específico de cada deployment, ver `kb_content/ingestion_schedule.yaml.example`). La fuente sigue siendo exclusivamente `kb_content/` local — no hay conectores a sistemas externos (ver `docs/roadmap.md` sección 3).
-- `eval_harness/rag_eval.py` + `eval_harness/datasets/rag_golden.yaml` (ver `docs/roadmap.md` sección 6): mismo patrón que `eval_harness/model_routing_eval.py` pero midiendo RAG — precisión/recall de `RAGService.retrieve` contra un dataset de preguntas con fuente esperada, y faithfulness de una respuesta generada contra lo recuperado, vía un juez LLM barato. Sin test dedicado, a propósito (llama LLMs reales, mismo motivo que `model_routing_eval.py`).
+- `chunking.py`: ventanas de 150 palabras con 30 de solape para prosa. El chunking adaptativo se evaluó y se pospuso: ninguno de los casos que fallan en la evaluación es un problema de chunking.
+- `embeddings.py` (`EmbeddingClient`): un vector de 768 dimensiones por chunk, vía `gemini-embedding` en LiteLLM.
+- **Almacenamiento** (`models.py`, migraciones `d2e5f8a1b3c4` y `e3f6a9b2c5d7`): `kb_articles` guarda de dónde salió cada documento (`source_type`: file/upload/drive/manual, `source_ref`), un hash SHA-256 del contenido, con qué modelo de embeddings se indexó, su nivel de acceso (`viewer`/`member`/`admin`/`owner`) y cuándo cambió en la fuente; `(organization_id, title)` es único entre los activos. `kb_chunks` guarda el vector con índice **HNSW** (con `hnsw.iterative_scan` para que el filtro por organización no recorte resultados) y una columna generada `tsvector` (español) con índice GIN. Requiere pgvector ≥ 0.8.
+- **Búsqueda híbrida** (`RAGService.retrieve`): búsqueda vectorial + palabras clave de Postgres, fusionadas con Reciprocal Rank Fusion (`fusion.py`). Las palabras clave aportan en códigos, siglas y datos exactos (guías, `OFC-MED-003`, `N-07`) que los embeddings representan peor. Interruptor: `RAG_HYBRID_SEARCH_ENABLED`.
+- **Filtro de relevancia** (`RAG_MAX_COSINE_DISTANCE`, 0,35): si el fragmento más cercano está más lejos y ningún fragmento contiene todos los términos de la pregunta, devuelve `[]` — el asistente dice que no tiene la información en vez de citar fuentes irrelevantes. Calibrado para `gemini-embedding-001`; recalibrar si cambia el modelo.
+- **Acceso por rol**: cada artículo tiene un nivel mínimo; `retrieve(viewer_role=...)` solo considera los que el rol puede leer.
+- **Ingesta idempotente** (`ingest_article`): upsert por título, salta lo que no cambió (hash + modelo de embeddings iguales), calcula los embeddings *antes* de tocar la base. **Sincronización de fuentes** (`sync.py`): indexa lo nuevo, salta lo igual y retira lo que desapareció de la fuente; nunca poda con una fuente vacía ni con un listado truncado.
+- **Formatos** (`app/rag/ingestion/`): markdown, PDF (`pypdf`, sin OCR), Excel (`openpyxl`, un chunk por fila) y Word (`python-docx`, tablas como filas con su sección). Un archivo ilegible se salta con un warning.
+- **API** (`app/rag/api.py`): `POST /kb/documents` (subida, máximo 10 MB), `GET/PATCH/DELETE /kb/documents`, `GET /kb/stats` (ADMIN/OWNER) y `POST /kb/search` (cualquier rol — es la herramienta MCP `search_knowledge_base`, RAG agéntico acotado: la recuperación automática del turno se mantiene y el modelo puede volver a buscar con otras palabras).
+- **Procesos de fondo**: `scripts/ingest_kb_articles.py` (`--force`, `--no-prune`) y `scripts/run_kb_ingestion_scheduler.py`, que ahora también sincroniza la carpeta de Drive de cada organización. Esperan y reintentan ante el límite de cuota de embeddings.
+- **Corpus de prueba**: `scripts/generate_sample_kb.py` genera 22 documentos sintéticos (md, pdf, xlsx, docx) en `kb_content/inter_rapidisimo/`, marcados como inventados. Dependencia de generación (`fpdf2`) en `requirements-dev.txt`.
+- **Evaluación** (`eval_harness/rag_eval.py`, `datasets/rag_golden.yaml`, 51 preguntas en 4 grupos): `--compare` mide vectorial contra híbrido, con y sin filtro, sin gastar LLM de generación. Con la KB ampliada: recall por respuesta 40% → 100%, recall por título 67% → 94%; el filtro deja pasar 1 de 10 preguntas fuera de la KB sin bloquear ninguna legítima. El eval completo (con juez LLM) mide *fidelidad*, no corrección: un juez de la misma familia que el generador tiende a ser indulgente.
+- **Decisión pendiente**: tarifas y oficinas se consultan hoy por RAG; una herramienta determinista (`cotizar_envio`) sería más fiable para datos tabulares exactos.
 
 ---
 
@@ -213,7 +250,7 @@ Suite de tests async contra una base de datos Postgres real de pruebas (`ai_agen
 **Uso en el proyecto:**
 - `tests/conftest.py`: fixture `db_session` (engine propio por test, transacción que se revierte al final — ningún test deja residuo) y fixture `client` (`httpx.AsyncClient` + `ASGITransport` contra la app real, con `get_db` sobreescrito para compartir la misma sesión/transacción del test).
 - `tests/factories.py`: helpers (`create_organization`, `create_user`, `create_customer`, `create_shipment`) para armar estado de dominio sin pasar por HTTP.
-- Cobertura actual: RBAC y aislamiento multi-tenant end-to-end (`test_tenant_isolation.py`), los endpoints REST de usuarios y de envíos (permisos, jerarquía, cross-tenant — `test_shipments_api.py` y los de `users`), el tool-calling loop genérico (streaming y no-streaming), `ModelRouter` (clasificación + heurístico de mensajes triviales), `LiteLLMProvider` (mapeo de errores, reensamblado de tool_calls en streaming), `LLMClient` (ya no reintenta nada), `require_password_changed`, el flujo de invitación de usuarios (`UserService.create`), la app de LiteLLM (admin, provisioning), el pipeline de ingestión multi-formato del RAG (`test_rag_ingestion.py`, `test_rag_service_ingest.py`), el servidor MCP (`test_mcp_server.py` — mockea `httpx.AsyncClient`, no necesita la API real corriendo) y el cliente MCP del chat (`test_chat_mcp_tools.py` — mockea `fastmcp.client.Client`, verifica que `open_mcp_tools` traduce `mcp_types.Tool` a `app.llm.tools.Tool` y reenvía el Bearer token).
+- Más de 400 tests (ver `pytest -q`). Cobertura actual: RBAC y aislamiento multi-tenant end-to-end (`test_tenant_isolation.py`), los endpoints REST de usuarios y de envíos (permisos, jerarquía, cross-tenant — `test_shipments_api.py` y los de `users`), el tool-calling loop genérico (streaming y no-streaming), `ModelRouter` (clasificación + heurístico de mensajes triviales), `LiteLLMProvider` (mapeo de errores, reensamblado de tool_calls en streaming), `LLMClient` (ya no reintenta nada), `require_password_changed`, el flujo de invitación de usuarios (`UserService.create`), la app de LiteLLM (admin, provisioning), el pipeline de ingestión multi-formato del RAG (`test_rag_ingestion.py`, `test_rag_service_ingest.py`), el servidor MCP (`test_mcp_server.py`, `test_mcp_new_tools.py` — mockean `httpx.AsyncClient`, no necesitan la API real corriendo), el filtro de herramientas por rol (`test_tool_access.py`), la búsqueda híbrida, el filtro de relevancia y el almacenamiento del RAG (`test_rag_*.py`, `test_kb_api.py`), la trazabilidad (`test_chat_tracing.py`, `test_tool_loop_observer.py`), reclamos y envíos (`test_claims_api.py`, `test_shipments_write_api.py`, `test_business_rules.py`) y Drive (`test_drive.py`, con un Drive falso que sirve archivos reales por los loaders) y el cliente MCP del chat (`test_chat_mcp_tools.py` — mockea `fastmcp.client.Client`, verifica que `open_mcp_tools` traduce `mcp_types.Tool` a `app.llm.tools.Tool` y reenvía el Bearer token).
 - `tests/test_user_management_tools.py` y `tests/test_shipment_tools.py` (las tools in-process `app.users.tools`/`app.shipments.tools`) se borraron junto con los módulos que probaban: el chat ya no las llama, quedaron huérfanos (ver sección 6.2).
 - Los módulos de test que quedaron huérfanos tras el reemplazo de los providers directos por el gateway LiteLLM (`test_anthropic_provider.py`, `test_gemini*.py`, `test_llmclient.py`, `test_openai_provider.py` — importaban `app.llm.providers`, movido a `app.llm.legacy`) ya se borraron: quedan completamente cubiertos por `test_litellm_provider.py` y `test_llm_client_retries.py`.
 
@@ -230,7 +267,7 @@ Cliente HTTP async — usado tanto por los tests (`AsyncClient` contra la app) c
 - **`litellm-db`** (`postgres:16`): base de datos propia de LiteLLM (virtual keys, spend, teams) — separada de la de la app a propósito, distinto dominio de fallo.
 - **`mcp-server`** (build propio, `mcp_server/Dockerfile`): el servidor MCP (sección 6.2), puerto `8100`. No está en el mismo `docker-compose.yml` que la API principal porque esa API no corre en Docker en este proyecto — se levanta aparte con `uvicorn` en el host — así que este contenedor alcanza la API vía `host.docker.internal` (funciona tal cual en Docker Desktop; en Linux nativo sin Docker Desktop hay que pasar `MCP_SERVER_API_BASE_URL` con la IP del host a mano).
 
-**Estado operacional real, no solo de infraestructura:** Anthropic y OpenAI están sin crédito de facturación; Gemini tiene una cuota gratuita diaria muy baja (20 requests/día para `gemini-3.6-flash`) que se agota fácilmente. Por eso `EXPENSIVE_MODEL` en `app/chat/service.py` está temporalmente apuntado a `gemini-3.6-flash` en vez de `claude-sonnet-5` — marcado explícitamente como `# TEMPORAL`, a revertir cuando haya crédito real.
+**Estado operacional real, no solo de infraestructura:** Anthropic y OpenAI están sin crédito de facturación; Gemini tiene una cuota gratuita diaria muy baja (20 requests/día para `gemini-3.6-flash`) que se agota fácilmente. Por eso `CHEAP_MODEL`/`EXPENSIVE_MODEL` en `app/chat/service.py` son dos `flash-lite` distintos de Gemini (cada uno con su propio cupo) en vez de `gemini-3.6-flash`/`claude-sonnet-5` — marcado explícitamente como `# TEMPORAL`, a revertir cuando haya crédito real. El nivel gratuito de embeddings limita las peticiones por minuto (cada texto de un lote cuenta como una): por eso la ingesta salta lo que no cambió y espera y reintenta ante el límite. Tras cambiar `mcp_server/` hay que reconstruir el contenedor: `docker compose up -d --build mcp-server`.
 
 ---
 
@@ -241,11 +278,14 @@ Cliente HTTP async — usado tanto por los tests (`AsyncClient` contra la app) c
 3. **Login / refresh / logout / cambio de contraseña** (`POST /auth/login|refresh|logout|change-password`): JWT de acceso + refresh token de 30 días hasheado; `change-password` es la única ruta que apaga `must_change_password`.
 4. **RBAC y aislamiento multi-tenant** en cada operación sobre usuarios/organizaciones: jerarquía de roles (`OWNER > ADMIN > MEMBER > VIEWER`), aislamiento por `organization_id` con bypass explícito solo para `is_platform_admin`.
 5. **Transferencia de propiedad** (`POST /organizations/{id}/transfer-ownership`): swap atómico de roles con bloqueo de filas.
-6. **Chat con tool-calling, streaming real** (`POST /chat/messages` y `/messages/stream`): cada turno recupera contexto de la KB (RAG) y elige modelo barato/caro en paralelo, arma el prompt versionado, y corre el loop de tools (usuarios + envíos/clientes, servidas por el servidor MCP — sección 6.2) hasta obtener una respuesta final — bloqueado con 403 si la cuenta tiene un cambio de contraseña pendiente. Una respuesta vacía del LLM (pasa bajo rate-limit en cascada) se trata como error explícito, no como éxito silencioso.
+6. **Chat con tool-calling, streaming real** (`POST /chat/messages` y `/messages/stream`): cada turno recupera contexto de la KB (RAG) y elige modelo barato/caro en paralelo, arma el prompt versionado, y corre el loop de tools (usuarios + envíos/clientes, servidas por el servidor MCP — sección 6.2) hasta obtener una respuesta final (el modelo solo ve las herramientas que su rol permite, y cada turno deja una traza) — bloqueado con 403 si la cuenta tiene un cambio de contraseña pendiente. Una respuesta vacía del LLM (pasa bajo rate-limit en cascada) se trata como error explícito, no como éxito silencioso.
 7. **Gestión de usuarios desde el chat, en lenguaje natural**: invitar, listar, ver, actualizar, eliminar y cambiar de rol — vía el servidor MCP, que reenvía a la API REST con el Bearer token del usuario, así que corre con exactamente las mismas reglas de autorización que llamar la API REST directo.
 8. **Consulta y actualización de envíos/clientes desde el chat**: cuántos envíos hay y de qué clientes, estado y último evento de un envío puntual, lista de clientes, y marcar un envío con un nuevo estado (registrando el evento correspondiente) — mismo camino vía MCP que el punto 7.
 9. **Evaluación de la calidad del routing** (`eval_harness/model_routing_eval.py` + `datasets/model_routing_golden.yaml`): mide accuracy real del clasificador barato/caro contra un dataset etiquetado a mano, en vez de asumirla.
 10. **Evaluación de la calidad del RAG** (`eval_harness/rag_eval.py` + `datasets/rag_golden.yaml`): mide precisión/recall de retrieval y faithfulness de la respuesta generada contra un dataset de preguntas con fuente esperada, mismo principio que el punto anterior aplicado a la KB en vez de al routing.
+12. **Reclamos y operación desde el chat**: abrir y seguir reclamos con número y plazo, dar de alta clientes y envíos, ver demorados según la política, estadísticas y avisar al cliente por correo — con confirmación previa para toda acción que cambia datos o contacta a un tercero (regla del prompt v6).
+13. **Base de conocimiento administrable**: subir documentos, definir quién puede leer cada uno, probar una búsqueda y sincronizar una carpeta de Google Drive desde la interfaz.
+14. **Trazabilidad**: cada respuesta puede abrirse para ver modelo, fuentes, herramientas y tiempos; los administradores ven el listado, las estadísticas y los errores.
 11. **Ingestión programada del RAG** (`scripts/run_kb_ingestion_scheduler.py`): corre la ingesta de `kb_content/` para cada organización configurada en `kb_content/ingestion_schedule.yaml`, sin depender de que alguien la invoque a mano — modo `--once` (cron del SO) o bucle continuo.
 
 ---
@@ -255,6 +295,8 @@ Cliente HTTP async — usado tanto por los tests (`AsyncClient` contra la app) c
 - `seed_inter_rapidisimo_shipments.py`: siembra clientes/envíos/eventos de ejemplo para el tenant Inter Rapidísimo (no idempotente — re-correr duplica o falla por el índice único de tracking number).
 - `ingest_kb_articles.py`: indexa `kb_content/` en la KB (RAG). Idempotente, reusable desde otros scripts (ver el siguiente).
 - `run_kb_ingestion_scheduler.py`: corre `ingest_kb_articles` periódicamente para los pares `(organization_id, subcarpeta)` de `kb_content/ingestion_schedule.yaml` -- modo `--once` (cron del SO) o bucle continuo, mismo patrón que `run_gmail_poller.py`.
+- `generate_sample_kb.py`: genera el corpus sintético de prueba (md, pdf, xlsx, docx) en `kb_content/inter_rapidisimo/`. Requiere `pip install -r requirements-dev.txt`.
+- `run_gmail_poller.py`: atiende periódicamente los buzones de Gmail conectados (`--once` para cron).
 - `provision_existing_tenant_llm_keys.py`: aprovisiona virtual keys de LiteLLM para tenants que no la tengan.
 - `create_emergency_fallback_key.py` / `create_eval_virtual_key.py`: generan las virtual keys especiales (una vez, a mano).
 - `reset_platform_data.py`: limpia datos de la plataforma para volver a empezar en desarrollo.
@@ -264,8 +306,35 @@ Cliente HTTP async — usado tanto por los tests (`AsyncClient` contra la app) c
 
 ## 12. Pendientes conocidos
 
-- **Crédito real en Anthropic/OpenAI**, o al menos aceptar que `EXPENSIVE_MODEL` sigue apuntado a Gemini hasta entonces (ver sección 9).
-- **Política de retrasos** (`kb_content/inter_rapidisimo/02-politica-retrasos-investigacion.md`: 5 días hábiles nacional, 3 urbano, +2 rural) — hoy el LLM la aplica leyendo el KB por su cuenta; calcularla en código (contra `MAX(shipment_events.occurred_at)`) es el siguiente paso explícito del roadmap, todavía no implementado.
-- **Gap de streaming pre-existente, ya no crítico pero no cerrado del todo**: algunos flujos de error de proveedor en `generate_stream()` no siempre llegan envueltos en `app.llm.errors.LLMError`.
-- `ruff`/`mypy`: linting y tipado estático, todavía no instalados ni integrados.
+- **Crédito real en Anthropic/OpenAI**, o aceptar que `EXPENSIVE_MODEL` sigue en Gemini hasta entonces (sección 9).
+- **Costo en la traza local**: `cost_usd` queda en `null`; el costo real está en Langfuse/LiteLLM. Cerrarlo exige leer el gasto de LiteLLM por `call id` después del turno.
+- **Validar con documentos y preguntas reales**: todo el corpus y el dataset de evaluación son sintéticos y los escribimos nosotros. La ventaja medida de la búsqueda híbrida puede ser menor con tráfico real.
+- **Tarifas y oficinas por herramienta** en lugar de RAG (ver sección 7).
+- **Reranker**: no se justifica todavía (recall por respuesta ya en 100%); reconsiderar si tras ampliar la KB fallan preguntas con el documento entre los primeros 20 resultados.
+- **Festivos** en el cálculo de días hábiles (`app/core/business_days.py`).
+- **OCR** para PDF escaneados y formatos antiguos (`.doc`, `.xls`).
+- **Google Drive en producción**: hay que habilitar la Drive API en el proyecto de Google Cloud, registrar `GOOGLE_DRIVE_REDIRECT_URI` y añadir el scope `drive.readonly` en la pantalla de consentimiento; el flujo OAuth real no se pudo probar sin esas credenciales (el resto está cubierto con un Drive falso).
+- **Pagos**: sin integración todavía. Recomendación y alternativas en `docs/roadmap.md` sección 7.
+- **Gap de streaming pre-existente**: algunos errores de proveedor en `generate_stream()` no siempre llegan envueltos en `app.llm.errors.LLMError`.
+- `ruff`/`mypy`: linting y tipado estático, todavía no instalados.
 - **`mcp_server/requirements.txt` sigue separado del `requirements.txt` raíz** (distinto Dockerfile, distinto contenedor) pero ya no es verdad que el raíz esté libre de `fastmcp` — ver sección 6.2: el raíz ahora instala `fastmcp-slim` (variante cliente, sin los extras de servidor que sí carga `mcp_server/requirements.txt` del lado del servidor). Para correr `tests/test_mcp_server.py` en local (que ejercita el lado *servidor*) sigue haciendo falta instalar también `mcp_server/requirements.txt`: `pip install -r requirements.txt -r mcp_server/requirements.txt`.
+
+---
+
+## 13. Integraciones de Google (`app/gmail/`, `app/drive/`)
+
+**Decisión**: se mantiene el código propio en vez de un servidor MCP genérico de terceros. Esos servidores son de un solo usuario y no traen lo que ya construimos: verificación del remitente (SPF/DKIM/DMARC más correo del cliente), idempotencia por correo, topes por remitente y aislamiento por organización con el token cifrado. Se exponen por nuestro MCP (sección 6.2).
+
+- **Gmail**: una conexión por organización, scopes mínimos (`gmail.readonly` y `gmail.send`), poller propio (`scripts/run_gmail_poller.py`), endpoint de correos sin resolver.
+- **Google Drive** (`app/drive/`): mismo cliente OAuth de Google (`GoogleOAuth` parametrizado por scopes y URI de retorno), scope `drive.readonly` (la aplicación nunca escribe en Drive), `state` firmado con propósito propio (un `state` de Gmail no sirve en el callback de Drive). Flujo: conectar → elegir carpeta (enlace o id, validado contra Drive) → ver qué cambiaría → sincronizar. Los archivos nativos de Google se exportan (Docs → `.docx`, Sheets → `.xlsx`, Slides → `.pdf`) y pasan por los loaders de la sección 7. Sincronización **incremental**: un archivo con la misma fecha de modificación no se descarga ni se reindexa; un fallo en un archivo no frena a los demás ni retira lo ya indexado; dos archivos con el mismo título se rechazan para que no se pisen y reembeban en cada pasada. Desconectar conserva los documentos ya indexados salvo `remove_documents=true`.
+
+---
+
+## 14. Frontend (`frontend/`)
+
+React 18 + Vite + TypeScript, sin librería de enrutado (una variable de vista en `App.tsx`).
+
+- **`react-markdown` + `remark-gfm`**: respuestas del asistente con listas, tablas, código y enlaces. No interpreta HTML crudo (lo que llegue como `<script>` se muestra como texto) y los enlaces abren en pestaña nueva con `noopener`.
+- **Chat**: fuentes como chips, copiar, 👍/👎, detalle de cómo se generó la respuesta, estado de la herramienta en curso ("Consultando envíos…"), botón de detener, campo multilínea y sugerencias según el rol.
+- **Vistas de administración** (solo ADMIN/OWNER): base de conocimiento (subida con arrastrar y soltar, nivel de acceso por documento, prueba de búsqueda), integraciones (Gmail y Drive) y trazabilidad (estadísticas, listado, detalle).
+- Los errores de validación de FastAPI (una lista de objetos) se muestran como texto legible.

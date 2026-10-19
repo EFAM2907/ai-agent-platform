@@ -16,6 +16,7 @@ import pytest
 
 from app.chat.models import ChatSession
 from app.chat.service import CHEAP_MODEL, ChatService, EmptyResponseError
+from app.llm.routing import RoutingDecision
 from app.llm.schemas import LLMResponse, TokenUsage
 from app.users.models import User, UserRole
 
@@ -32,7 +33,7 @@ def _fake_mcp_tools():
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def _empty_tools(bearer_token: str):
+    async def _empty_tools(user, **_kwargs):
         yield []
 
     with patch("app.chat.service.open_mcp_tools", _empty_tools):
@@ -74,7 +75,7 @@ def _build_service(llm_client):
     rag_service.retrieve.return_value = []
 
     model_router = AsyncMock()
-    model_router.choose_model.return_value = CHEAP_MODEL
+    model_router.decide.return_value = RoutingDecision(CHEAP_MODEL, "trivial")
 
     service = ChatService(
         repository=repository,
@@ -98,13 +99,19 @@ async def test_send_message_raises_on_empty_response_and_does_not_persist_it():
             current_user=_current_user(),
             message="hola",
             session_id=None,
-            bearer_token="t",
         )
 
     # Solo el mensaje USER (de _prepare_turn) -- nunca se llega a
     # persistir un ChatMessage ASSISTANT vacio.
     assert repository.add_message.await_count == 1
-    service.session.commit.assert_not_awaited()
+    # Los dos commits son el del mensaje del usuario (antes de llamar al
+    # modelo) y el de la traza del turno fallido -- ninguno guarda una
+    # respuesta vacia.
+    assert service.session.commit.await_count == 2
+    [failed_trace] = [c.args[0] for c in repository.add_trace.await_args_list]
+    assert failed_trace.status == "error"
+    assert failed_trace.error_type == "EmptyResponseError"
+    assert failed_trace.assistant_message_id is None
 
 
 @pytest.mark.asyncio
@@ -126,12 +133,16 @@ async def test_send_message_succeeds_with_real_content():
         current_user=_current_user(),
         message="hola",
         session_id=None,
-        bearer_token="t",
     )
 
     assert result.content == "Hola, en que te puedo ayudar?"
     assert repository.add_message.await_count == 2  # USER + ASSISTANT
-    service.session.commit.assert_awaited_once()
+    # commit del mensaje del usuario + commit de respuesta+traza
+    assert service.session.commit.await_count == 2
+    [ok_trace] = [c.args[0] for c in repository.add_trace.await_args_list]
+    assert ok_trace.status == "ok"
+    assert ok_trace.model == CHEAP_MODEL
+    assert result.trace_id == ok_trace.trace_id
 
 
 @pytest.mark.asyncio
@@ -153,14 +164,15 @@ async def test_send_message_stream_yields_error_event_on_empty_response():
             current_user=_current_user(),
             message="hola",
             session_id=None,
-            bearer_token="t",
         )
     ]
 
     assert [e["event"] for e in events] == ["start", "error"]
+    assert events[1]["trace_id"] == events[0]["trace_id"]  # la UI puede citar la traza del fallo
     # Solo el mensaje USER -- nunca se persiste un ChatMessage ASSISTANT vacio.
     assert repository.add_message.await_count == 1
-    service.session.commit.assert_not_awaited()
+    [failed_trace] = [c.args[0] for c in repository.add_trace.await_args_list]
+    assert failed_trace.status == "error"
 
 
 @pytest.mark.asyncio
@@ -192,9 +204,11 @@ async def test_send_message_stream_succeeds_with_real_content():
             current_user=_current_user(),
             message="hola",
             session_id=None,
-            bearer_token="t",
         )
     ]
 
     assert [e["event"] for e in events] == ["start", "delta", "delta", "delta", "done"]
-    service.session.commit.assert_awaited_once()
+    assert service.session.commit.await_count == 2
+    done = events[-1]
+    assert done["trace"]["trace_id"] == events[0]["trace_id"]
+    assert done["trace"]["model"] == CHEAP_MODEL

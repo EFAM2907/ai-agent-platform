@@ -7,9 +7,11 @@ de ingesta, o lo que lo reemplace mas adelante)."""
 from __future__ import annotations
 
 import logging
+import mimetypes
 from pathlib import Path
 
 from app.rag.ingestion.base import DocumentLoadError, IngestedDocument, Loader
+from app.rag.ingestion.docx_loader import DocxLoader
 from app.rag.ingestion.excel_loader import ExcelLoader
 from app.rag.ingestion.markdown_loader import MarkdownLoader
 from app.rag.ingestion.pdf_loader import PDFLoader
@@ -20,7 +22,13 @@ _LOADERS: dict[str, Loader] = {
     ".md": MarkdownLoader(),
     ".pdf": PDFLoader(),
     ".xlsx": ExcelLoader(),
+    ".docx": DocxLoader(),
 }
+
+
+def supported_extensions() -> list[str]:
+    """Extensiones con loader registrado, para validar subidas y mostrarlas en la UI."""
+    return sorted(_LOADERS)
 
 
 class UnsupportedSourceError(Exception):
@@ -43,7 +51,17 @@ def load_documents(path: Path) -> list[IngestedDocument]:
             f"{path.name}: extension '{path.suffix}' sin loader registrado "
             f"(soportadas: {', '.join(sorted(_LOADERS))})"
         )
-    return loader.load(path)
+    documents = loader.load(path)
+    mime_type = mimetypes.guess_type(path.name)[0]
+    for document in documents:
+        # Un archivo que produce varios documentos (un Excel con varias
+        # hojas) los distingue por el titulo, para que quitar una hoja
+        # del archivo retire SOLO ese documento al sincronizar.
+        document.source_ref = (
+            path.name if len(documents) == 1 else f"{path.name}#{document.title}"
+        )
+        document.mime_type = document.mime_type or mime_type
+    return documents
 
 
 def load_documents_from_dir(directory: Path) -> list[IngestedDocument]:

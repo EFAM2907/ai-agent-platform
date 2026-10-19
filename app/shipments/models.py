@@ -150,3 +150,30 @@ class ShipmentEvent(Base):
     )
 
     shipment: Mapped["Shipment"] = relationship(back_populates="events")
+
+
+class ShipmentNotification(Base):
+    """Un correo enviado al cliente de un envio (ver
+    POST /shipments/{tracking}/notify). Sirve de auditoria (quien aviso
+    a quien y que dijo) y de limite diario por envio."""
+
+    __tablename__ = "shipment_notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id")
+    )
+    shipment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE")
+    )
+    sent_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    to_email: Mapped[str] = mapped_column(String(320))
+    subject: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

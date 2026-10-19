@@ -29,6 +29,25 @@ class Settings(BaseSettings):
     # como antes (ver docs/roadmap.md seccion 2). "/mcp" es el path por
     # defecto que expone FastMCP para transport="streamable-http".
     mcp_server_url: str = "http://localhost:8100/mcp"
+    # Token exchange (RFC 8693): ChatService NO reenvia el JWT del
+    # usuario al MCP server; la API actua de STS y emite un token
+    # delegado RS256 de vida corta con aud=mcp_audience, scope reducido
+    # y claim `act`. Clave privada PEM (PKCS8) sin cifrar; si falta, en
+    # development se genera una efimera al arrancar (los tokens mueren
+    # al reiniciar), en cualquier otro entorno es un error. Generar con:
+    # openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048
+    sts_private_key: str | None = None
+    sts_key_id: str = "sts-1"
+    sts_issuer: str = "http://localhost:8000"
+    mcp_audience: str = "mcp-server"
+    # Un turno de chat abre UNA sesion MCP y puede tardar (LLM + hasta 5
+    # vueltas de tools), asi que el TTL cubre un turno, no una llamada.
+    delegated_token_ttl_seconds: int = 300
+    # TTL del token de una accion aprobada por el humano: se usa
+    # inmediatamente para esa unica llamada.
+    approved_action_ttl_seconds: int = 60
+    # Cuanto tiempo vive una accion pendiente de aprobacion.
+    pending_action_ttl_minutes: int = 15
     # Virtual key acotada (budget bajo, un solo modelo barato) que
     # get_tenant_llm_client() usa cuando una organizacion todavia no
     # tiene su propia virtual key. Requerida a proposito (sin default):
@@ -56,6 +75,10 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/gmail/callback"
+    # Google Drive (app.drive) usa el MISMO cliente OAuth que Gmail, con su
+    # propia URI de retorno -- registrarla tambien como URI autorizada, y
+    # habilitar la Google Drive API en el proyecto de Google Cloud.
+    google_drive_redirect_uri: str = "http://localhost:8000/drive/callback"
     # Ventana de busqueda del poller (sintaxis de Gmail: "2d", "12h").
     # Cubre una caida del poller de hasta esa duracion; los correos ya
     # atendidos se descartan por gmail_processed_messages, no por esta
@@ -93,7 +116,21 @@ class Settings(BaseSettings):
     # tiempo real.
     kb_ingestion_schedule_path: str = "kb_content/ingestion_schedule.yaml"
     kb_ingestion_poll_interval_seconds: int = 3600
-    
+    # Busqueda hibrida del RAG: vectorial + palabras clave fusionadas con
+    # RRF (ver RAGService.retrieve). False vuelve a solo-vectorial sin
+    # tocar codigo ni migraciones.
+    rag_hybrid_search_enabled: bool = True
+    # Filtro de relevancia del RAG: si el fragmento MAS cercano a la
+    # pregunta esta a mas de esta distancia coseno, y ademas ningun
+    # fragmento contiene TODOS los terminos de la pregunta, retrieve()
+    # devuelve [] (el agente dice que no tiene la informacion en vez de
+    # recibir 5 fragmentos irrelevantes y citarlos como fuentes). 0
+    # desactiva el filtro. Calibrado con eval_harness/datasets/rag_golden.yaml
+    # (preguntas con respuesta: 0.09-0.40; fuera de la KB: 0.35-0.49) para
+    # gemini-embedding-001 a 768 dims -- si cambia el modelo de embeddings,
+    # hay que recalibrarlo (python -m eval_harness.rag_eval <org> --compare).
+    rag_max_cosine_distance: float = 0.35
+
     @field_validator("gmail_tracking_bare_pattern")
     @classmethod
     def _validate_tracking_pattern(cls, value: str) -> str:

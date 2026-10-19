@@ -79,8 +79,14 @@ services:
       dockerfile: mcp_server/Dockerfile
     restart: unless-stopped
     ports:
-      - "8100:8100"
+      # Solo loopback: el MCP server no debe ser alcanzable desde la red.
+      - "127.0.0.1:8100:8100"
     environment:
+      # Resource server OAuth: valida los tokens delegados del STS de la
+      # API con su JWKS (ver mcp_server/auth.py). Deben coincidir con
+      # STS_ISSUER / MCP_AUDIENCE de la API.
+      - STS_ISSUER=${STS_ISSUER:-http://localhost:8000}
+      - MCP_AUDIENCE=${MCP_AUDIENCE:-mcp-server}
       # La API principal (app/main.py) no corre en este
       # docker-compose -- se levanta aparte con uvicorn en el host.
       # host.docker.internal es como este contenedor alcanza el host

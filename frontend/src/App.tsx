@@ -4,6 +4,7 @@ import {
   deleteChatSession,
   getAccessToken,
   getCurrentUser,
+  getDriveStatus,
   getGmailStatus,
   getOrganization,
   listChatSessions,
@@ -13,13 +14,33 @@ import {
   renameChatSession,
 } from "./api";
 import { ChangePasswordModal, ChangePasswordScreen } from "./ChangePassword";
-import { GmailPanel } from "./GmailPanel";
+import { IntegrationsView } from "./IntegrationsView";
+import { KnowledgeView } from "./KnowledgeView";
 import { MainChat } from "./MainChat";
-import { Sidebar } from "./Sidebar";
-import type { ChatSessionSummary, GmailStatus, Organization, UserProfile } from "./types";
+import { Sidebar, type AppView } from "./Sidebar";
+import { TracesView } from "./TracesView";
+import type { ChatSessionSummary, DriveStatus, GmailStatus, Organization, UserProfile } from "./types";
 import { useChat } from "./useChat";
 
 const PLATFORM_NAME = "AI Support";
+
+// Sugerencias de la pantalla de inicio acordes al rol: un viewer no puede
+// crear usuarios ni modificar envios, asi que no se le ofrecen.
+const SUGGESTIONS_READ_ONLY = [
+  "¿Qué envíos están demorados según la política?",
+  "¿Cuál es la política de retrasos para envíos nacionales?",
+  "¿Cuánto cuesta enviar de Bogotá a Leticia 3 kg?",
+];
+const SUGGESTIONS_MEMBER = [
+  "¿Qué envíos están demorados según la política?",
+  "Crea un cliente nuevo y un envío para él",
+  "¿Qué significa el código de novedad N-07?",
+];
+const SUGGESTIONS_ADMIN = [
+  "Dame un resumen de la operación de hoy",
+  "Abre un reclamo por daño para la guía 854321",
+  "Agrega un nuevo usuario a la organización",
+];
 
 function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [email, setEmail] = useState("");
@@ -86,7 +107,8 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
   // /gmail/status tambien exige ADMIN/OWNER) -- mismo criterio que
   // members. Se carga junto con members mas abajo, mismo chequeo de rol.
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
-  const [showGmailModal, setShowGmailModal] = useState(false);
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
+  const [view, setView] = useState<AppView>("chat");
 
   const chat = useChat(onLoggedOut);
 
@@ -141,6 +163,12 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
           } catch {
             if (!cancelled) setGmailStatus(null);
           }
+          try {
+            const status = await getDriveStatus();
+            if (!cancelled) setDriveStatus(status);
+          } catch {
+            if (!cancelled) setDriveStatus(null);
+          }
         }
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -171,10 +199,12 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
   }, [chat.sessionId]);
 
   function handleSelectSession(id: string) {
+    setView("chat");
     void chat.loadSession(id);
   }
 
   function handleNewChat() {
+    setView("chat");
     chat.startNewSession();
   }
 
@@ -243,6 +273,14 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
     );
   }
 
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "owner";
+  const suggestions =
+    currentUser?.role === "viewer"
+      ? SUGGESTIONS_READ_ONLY
+      : isAdmin
+        ? SUGGESTIONS_ADMIN
+        : SUGGESTIONS_MEMBER;
+
   return (
     <div className="app-layout">
       <Sidebar
@@ -259,23 +297,34 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
         onLogout={() => void handleLogout()}
         onChangePassword={() => setShowPasswordModal(true)}
         gmailStatus={gmailStatus}
-        canManageIntegrations={currentUser?.role === "admin" || currentUser?.role === "owner"}
-        onOpenGmail={() => setShowGmailModal(true)}
+        driveStatus={driveStatus}
+        view={view}
+        onChangeView={setView}
+        isAdmin={isAdmin}
       />
-      <MainChat
-        platformName={PLATFORM_NAME}
-        userName={currentUser?.full_name ?? null}
-        organizationName={organization?.name ?? null}
-        chat={chat}
-      />
-      {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
-      {showGmailModal && (
-        <GmailPanel
-          status={gmailStatus}
-          onStatusChange={setGmailStatus}
-          onClose={() => setShowGmailModal(false)}
+      {view === "chat" || !isAdmin ? (
+        <MainChat
+          platformName={PLATFORM_NAME}
+          userName={currentUser?.full_name ?? null}
+          organizationName={organization?.name ?? null}
+          suggestions={suggestions}
+          chat={chat}
         />
+      ) : (
+        <main className="main-view">
+          {view === "knowledge" && <KnowledgeView />}
+          {view === "integrations" && (
+            <IntegrationsView
+              gmailStatus={gmailStatus}
+              onGmailStatusChange={setGmailStatus}
+              driveStatus={driveStatus}
+              onDriveStatusChange={setDriveStatus}
+            />
+          )}
+          {view === "traces" && <TracesView />}
+        </main>
       )}
+      {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)} />}
     </div>
   );
 }

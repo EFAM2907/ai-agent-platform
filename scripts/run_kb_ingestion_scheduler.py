@@ -1,6 +1,11 @@
-"""Corre periodicamente la ingesta de kb_content/ para cada organizacion
-configurada, en vez de depender de que alguien invoque
-scripts/ingest_kb_articles.py a mano cada vez que el contenido cambia.
+"""Mantiene la base de conocimiento al dia sin que nadie lo haga a mano:
+
+1. Ingesta kb_content/ para cada organizacion configurada (en vez de
+   depender de invocar scripts/ingest_kb_articles.py cada vez que cambia
+   el contenido).
+2. Sincroniza la carpeta de Google Drive de cada organizacion que la
+   tenga conectada (ver app.drive.runner). No necesita configuracion
+   aparte: las conexiones y carpetas viven en la base de datos.
 
 Lee los pares (organization_id, subcarpeta) desde el archivo apuntado
 por settings.kb_ingestion_schedule_path (default:
@@ -33,6 +38,7 @@ from pathlib import Path
 import yaml
 
 from app.core.config import settings
+from app.drive.runner import sync_all_drive_connections
 from scripts.ingest_kb_articles import ingest_kb_articles
 
 logger = logging.getLogger("kb_ingestion_scheduler")
@@ -55,6 +61,11 @@ def _load_schedule() -> list[dict]:
 
 
 async def run_scheduled_ingestion() -> None:
+    await _ingest_local_folders()
+    await sync_all_drive_connections()
+
+
+async def _ingest_local_folders() -> None:
     for entry in _load_schedule():
         organization_id = uuid.UUID(entry["organization_id"])
         articles_dir = _KB_CONTENT_ROOT / entry["dir"]

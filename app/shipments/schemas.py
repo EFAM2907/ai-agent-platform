@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from app.shipments.models import Customer, Shipment, ServiceType, ShipmentStatus
 
@@ -130,3 +130,88 @@ class ShipmentStatusUpdate(BaseModel):
     new_status: str
     city: str | None = None
     notes: str | None = None
+
+
+# ---------------------------------------------------------------------
+# Escritura, historial, demoras, estadisticas y notificaciones
+# ---------------------------------------------------------------------
+class CustomerCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=50)
+    document_id: str | None = Field(default=None, max_length=50)
+
+
+class CustomerUpdate(BaseModel):
+    """Todos opcionales: solo se cambia lo que viene en el body."""
+
+    full_name: str | None = Field(default=None, min_length=2, max_length=200)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=50)
+    document_id: str | None = Field(default=None, max_length=50)
+
+
+class ShipmentCreate(BaseModel):
+    customer_id: uuid.UUID
+    origin_city: str = Field(min_length=2, max_length=100)
+    destination_city: str = Field(min_length=2, max_length=100)
+    # string libre por la misma razon que ShipmentStatusUpdate.new_status
+    service_type: str = "estandar"
+    tracking_number: str | None = Field(default=None, max_length=50)
+
+
+class ShipmentEventResponse(BaseModel):
+    event_type: ShipmentStatus
+    city: str | None = None
+    notes: str | None = None
+    occurred_at: datetime
+
+
+class ShipmentHistoryResponse(BaseModel):
+    tracking_number: str
+    status: ShipmentStatus
+    customer_name: str
+    origin_city: str
+    destination_city: str
+    events: list[ShipmentEventResponse]
+
+
+class DelayedShipmentResponse(BaseModel):
+    tracking_number: str
+    customer_name: str
+    status: ShipmentStatus
+    origin_city: str
+    destination_city: str
+    last_event_at: datetime | None = None
+    level: str
+    business_days_without_event: int
+    delayed_after: int
+    zone: str
+
+
+class DelayedShipmentListResponse(BaseModel):
+    returned: int
+    shipments: list[DelayedShipmentResponse]
+
+
+class ShipmentStatsResponse(BaseModel):
+    total_shipments: int
+    total_customers: int
+    by_status: dict[str, int]
+    by_service: dict[str, int]
+    attention: dict[str, int]
+
+
+class CustomerDetailResponse(CustomerResponse):
+    shipments: list[ShipmentSummaryResponse] = []
+
+
+class NotifyRequest(BaseModel):
+    subject: str = Field(min_length=3, max_length=200)
+    message: str = Field(min_length=10, max_length=2000)
+
+
+class NotifyResponse(BaseModel):
+    tracking_number: str
+    sent_to: str
+    subject: str
