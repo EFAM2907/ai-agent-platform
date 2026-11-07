@@ -9,13 +9,27 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from mcp_server import auth as mcp_auth
 from mcp_server import server as mcp_server_module
+from app.core.scopes import TOOL_SCOPE
 
 H = {"authorization": "Bearer t"}
 
 
 @pytest.fixture(autouse=True)
 def _auth(monkeypatch):
+    # La validacion del token se prueba en tests/test_delegation.py; aca se
+    # la deja pasar para probar solo el reenvio a la API.
+    monkeypatch.setattr(mcp_auth, "_bearer_token", lambda: "t")
+    monkeypatch.setattr(mcp_auth, "args_hash", lambda _args: "ok")
+    monkeypatch.setattr(
+        mcp_auth,
+        "validate_token",
+        lambda _t: {
+            "sub": "u", "jti": "j", "scope": " ".join(TOOL_SCOPE.values()),
+            "approved_action": "a", "args_hash": "ok",
+        },
+    )
     monkeypatch.setattr(mcp_server_module, "_forwarded_headers", lambda: H)
 
 

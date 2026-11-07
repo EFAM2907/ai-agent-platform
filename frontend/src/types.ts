@@ -159,6 +159,7 @@ export interface TraceDetail {
   };
   llm_calls: TraceLLMCall[];
   tool_calls: TraceToolCall[];
+  delegation?: { actor?: string; sub?: string; jti?: string; aud?: string; scopes?: string[] };
   input_tokens: number;
   output_tokens: number;
   cost_usd: number | null;

@@ -242,6 +242,7 @@ def _trace_detail(trace: ChatTurnTrace) -> TraceDetailOut:
         retrieval=trace.retrieval or {},
         llm_calls=trace.llm_calls or [],
         tool_calls=trace.tool_calls or [],
+        delegation=trace.delegation or {},
         input_tokens=trace.input_tokens,
         output_tokens=trace.output_tokens,
         cost_usd=float(trace.cost_usd) if trace.cost_usd is not None else None,

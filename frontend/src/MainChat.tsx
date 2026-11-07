@@ -277,6 +277,7 @@ export function MainChat({ platformName, userName, organizationName, suggestions
           placeholder="Pregunta lo que quieras…  (Shift+Enter para salto de línea)"
           value={inputValue}
           rows={1}
+          spellCheck={false}
           onChange={(event) => setInputValue(event.target.value)}
           onKeyDown={handleKeyDown}
           disabled={isSending}

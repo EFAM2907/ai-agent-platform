@@ -91,6 +91,18 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
         </div>
       )}
 
+      {trace.delegation?.jti && (
+        <div className="trace__block">
+          <div className="trace__title">Delegación</div>
+          <p className="trace__line">
+            Actor: {trace.delegation.actor} <span className="trace__muted">· en nombre de {trace.delegation.sub}</span>
+          </p>
+          <p className="trace__line trace__muted">
+            jti {trace.delegation.jti} · aud {trace.delegation.aud} · {(trace.delegation.scopes ?? []).join(", ")}
+          </p>
+        </div>
+      )}
+
       {trace.status === "error" && (
         <p className="trace__line trace__line--warn">
           Este turno falló: {trace.error_type}
