@@ -1,4 +1,10 @@
-# Solo para generar el corpus sintetico de prueba (scripts/generate_sample_kb.py);
-# la app en runtime no lo necesita.
+# Solo desarrollo/CI: no entra en la imagen de runtime.
+#  - pytest y plugins: suite en tests/ (mcp_server/requirements.txt: tests del lado servidor de FastMCP)
+#  - fpdf2: generar el corpus sintetico de prueba (scripts/generate_sample_kb.py)
 -r requirements.txt
+-r mcp_server/requirements.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pluggy==1.6.0
+iniconfig==2.3.0
 fpdf2==2.8.9
