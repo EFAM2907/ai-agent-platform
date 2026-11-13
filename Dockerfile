@@ -42,11 +42,14 @@ WORKDIR /app
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser migrations/ ./migrations/
 COPY --chown=appuser:appuser alembic.ini ./alembic.ini
+COPY --chown=appuser:appuser entrypoint.sh ./entrypoint.sh
 
 USER appuser
 
 EXPOSE 8000
 
-# Exec form so uvicorn is PID 1 and receives SIGTERM directly.
-# No --reload (development only). Migrations are NOT run here.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Exec form, invoked through `sh` so it does not depend on the executable
+# bit (not preserved on Windows checkouts). entrypoint.sh validates the
+# configuration, runs `alembic upgrade head` (advisory-locked, safe with
+# several replicas) and then execs uvicorn as PID 1. No --reload.
+CMD ["sh", "./entrypoint.sh"]

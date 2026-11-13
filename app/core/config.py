@@ -1,7 +1,14 @@
 import re
+from typing import Annotated
 
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Placeholder values shipped in .env.example. If one of them reaches a
+# production deployment, the secret is public: refuse to start.
+EXAMPLE_SECRET_KEYS = frozenset({"replace-with-a-long-random-string"})
+MIN_PRODUCTION_SECRET_KEY_LENGTH = 32
+
 
 class Settings(BaseSettings):
   
@@ -40,6 +47,11 @@ class Settings(BaseSettings):
     sts_key_id: str = "sts-1"
     sts_issuer: str = "http://localhost:8000"
     mcp_audience: str = "mcp-server"
+    # Browser origins allowed by CORS. Env var CORS_ORIGINS, comma
+    # separated (e.g. "http://localhost:5173,https://app.example.com").
+    # NoDecode: pydantic-settings must not try to parse it as JSON; the
+    # validator below splits it. The default keeps the local Vite flow.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     # Un turno de chat abre UNA sesion MCP y puede tardar (LLM + hasta 5
     # vueltas de tools), asi que el TTL cubre un turno, no una llamada.
     delegated_token_ttl_seconds: int = 300
@@ -140,6 +152,49 @@ class Settings(BaseSettings):
             raise ValueError(f"GMAIL_TRACKING_BARE_PATTERN no es un regex valido: {exc}") from exc
         return value
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _validate_production_settings(self) -> "Settings":
+        """Fail fast: refuse to boot production with development config.
+
+        Messages name the offending field but never include its value.
+        """
+        if self.environment.strip().lower() != "production":
+            return self
+
+        problems: list[str] = []
+        if len(self.secret_key) < MIN_PRODUCTION_SECRET_KEY_LENGTH:
+            problems.append(
+                f"SECRET_KEY must be at least {MIN_PRODUCTION_SECRET_KEY_LENGTH} characters"
+            )
+        if self.secret_key in EXAMPLE_SECRET_KEYS:
+            problems.append("SECRET_KEY is still the placeholder value from .env.example")
+        if not self.sts_private_key:
+            problems.append(
+                "STS_PRIVATE_KEY is required (every replica must sign with the same key)"
+            )
+        if "*" in self.cors_origins:
+            problems.append("CORS_ORIGINS must not contain '*'")
+        if any(origin != "*" and not origin.startswith("https://") for origin in self.cors_origins):
+            problems.append("CORS_ORIGINS must contain only https:// origins")
+
+        if problems:
+            raise ValueError("Invalid production configuration: " + "; ".join(problems))
+        return self
+
+    # hide_input_in_errors: a validation error must never echo the input
+    # (it would print secrets such as SECRET_KEY into startup logs).
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
 
 settings = Settings()
