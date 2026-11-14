@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -48,6 +50,46 @@ class Tool(BaseModel):
         return self.definition.name
 
 
+class ToolLoopObserver(Protocol):
+    """Quien quiera registrar lo que pasa dentro del loop (trazabilidad,
+    metricas) implementa esto y lo pasa como `observer`. El loop nunca
+    depende de el para funcionar: un observer que falla no tumba el
+    turno (ver _notify)."""
+
+    def on_llm_response(self, response: LLMResponse) -> None: ...
+
+    def on_tool_call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        ok: bool,
+        duration_ms: float,
+        error: str | None,
+        result_chars: int,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class ToolEvent:
+    """Aviso en vivo de una herramienta, para que la interfaz muestre
+    "Consultando envios..." mientras el modelo espera su resultado. Solo
+    lo emite run_streaming_tool_loop(emit_tool_events=True)."""
+
+    name: str
+    phase: str  # "start" | "end"
+    ok: bool | None = None
+
+
+def _notify(observer: ToolLoopObserver | None, method: str, *args: Any, **kwargs: Any) -> None:
+    if observer is None:
+        return
+    try:
+        getattr(observer, method)(*args, **kwargs)
+    except Exception:  # noqa: BLE001 -- observar nunca debe romper el turno
+        logger.exception("El observer del tool loop fallo en %s", method)
+
+
 class ToolLoopError(Exception):
     """El LLM siguio pidiendo tool_calls mas alla de max_iterations --
     nunca dejamos que esto se vuelva un loop infinito silencioso."""
@@ -59,6 +101,7 @@ async def run_tool_loop(
     tools: list[Tool],
     *,
     max_iterations: int = 3,
+    observer: ToolLoopObserver | None = None,
 ) -> LLMResponse:
     """Corre `request` contra `llm_client` con las `tools` dadas,
     ejecutando cada tool_call que el LLM pida y devolviendole el
@@ -83,11 +126,12 @@ async def run_tool_loop(
             update={"messages": messages, "tools": tool_definitions}
         )
         response = await llm_client.generate(current_request)
+        _notify(observer, "on_llm_response", response)
 
         if response.finish_reason != "tool_calls" or not response.tool_calls:
             return response
 
-        messages = await _append_tool_results(messages, tools_by_name, response)
+        messages = await _append_tool_results(messages, tools_by_name, response, observer)
 
     raise ToolLoopError(
         f"El modelo siguio pidiendo tool_calls despues de {max_iterations} vueltas"
@@ -100,7 +144,9 @@ async def run_streaming_tool_loop(
     tools: list[Tool],
     *,
     max_iterations: int = 3,
-) -> AsyncIterator[str]:
+    observer: ToolLoopObserver | None = None,
+    emit_tool_events: bool = False,
+) -> AsyncIterator[str | ToolEvent]:
     """Como run_tool_loop, pero streameando el texto de cada vuelta a
     medida que el proveedor lo entrega en vez de esperar la respuesta
     completa -- para que una conversacion con tools disponibles no
@@ -120,7 +166,12 @@ async def run_streaming_tool_loop(
     LiteLLMProvider._build_stream_final_response) -- ahi no hay forma
     de saber si hubo tool_calls, así que esta vuelta se trata como la
     final: ya se le mostró al usuario el texto que haya llegado, y
-    reintentar a ciegas podría duplicarlo."""
+    reintentar a ciegas podría duplicarlo.
+
+    emit_tool_events=True intercala ToolEvent("start"/"end") entre los
+    deltas de texto, en el mismo generador, para que quien consume el
+    stream pueda mostrar que herramienta se esta ejecutando. Por defecto
+    False: el generador solo produce str, como siempre."""
     tools_by_name = {tool.name: tool for tool in tools}
     tool_definitions = [tool.definition for tool in tools]
     messages = list(request.messages)
@@ -136,10 +187,25 @@ async def run_streaming_tool_loop(
         response = collector.final_response
         if response is None:
             return
+        _notify(observer, "on_llm_response", response)
         if response.finish_reason != "tool_calls" or not response.tool_calls:
             return
 
-        messages = await _append_tool_results(messages, tools_by_name, response)
+        messages = [
+            *messages,
+            Message(
+                role=Role.ASSISTANT,
+                content=response.content,
+                tool_calls=response.tool_calls,
+            ),
+        ]
+        for tool_call in response.tool_calls:
+            if emit_tool_events:
+                yield ToolEvent(tool_call.name, "start")
+            tool_message, ok = await _run_tool_call(tools_by_name, tool_call, observer)
+            messages.append(tool_message)
+            if emit_tool_events:
+                yield ToolEvent(tool_call.name, "end", ok)
 
     raise ToolLoopError(
         f"El modelo siguio pidiendo tool_calls despues de {max_iterations} vueltas"
@@ -147,7 +213,10 @@ async def run_streaming_tool_loop(
 
 
 async def _append_tool_results(
-    messages: list[Message], tools_by_name: dict[str, Tool], response: LLMResponse
+    messages: list[Message],
+    tools_by_name: dict[str, Tool],
+    response: LLMResponse,
+    observer: ToolLoopObserver | None = None,
 ) -> list[Message]:
     """Ejecuta cada tool_call de `response` y devuelve `messages` con
     el mensaje ASSISTANT (con los tool_calls pedidos) y un mensaje TOOL
@@ -165,16 +234,48 @@ async def _append_tool_results(
     ]
 
     for tool_call in response.tool_calls:
-        result = await _execute_tool(tools_by_name, tool_call)
-        messages.append(
-            Message(
-                role=Role.TOOL,
-                content=json.dumps(result, ensure_ascii=False, default=str),
-                tool_call_id=tool_call.id,
-            )
-        )
+        tool_message, _ok = await _run_tool_call(tools_by_name, tool_call, observer)
+        messages.append(tool_message)
 
     return messages
+
+
+def _result_failed(result: Any) -> bool:
+    """Una tool "fallo" si el loop la convirtio en {"error": ...} (tool
+    desconocida o excepcion) o si devolvio un error de negocio con esa
+    misma forma -- es el contrato de las tools MCP (ver
+    mcp_server/server.py, _call): {"error", "status_code"}."""
+    return isinstance(result, dict) and "error" in result
+
+
+async def _run_tool_call(
+    tools_by_name: dict[str, Tool],
+    tool_call: ToolCall,
+    observer: ToolLoopObserver | None,
+) -> tuple[Message, bool]:
+    """Ejecuta UNA tool_call y devuelve el mensaje TOOL para el LLM mas
+    si salio bien, avisando al observer (duracion, ok, tamano del
+    resultado). Compartido por el loop normal y el de streaming para
+    que ninguno pueda divergir en como arma el turno de vuelta."""
+    started_at = time.perf_counter()
+    result = await _execute_tool(tools_by_name, tool_call)
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    content = json.dumps(result, ensure_ascii=False, default=str)
+    ok = not _result_failed(result)
+    _notify(
+        observer,
+        "on_tool_call",
+        tool_call.name,
+        tool_call.arguments,
+        ok=ok,
+        duration_ms=duration_ms,
+        error=str(result.get("error")) if not ok and isinstance(result, dict) else None,
+        result_chars=len(content),
+    )
+    return (
+        Message(role=Role.TOOL, content=content, tool_call_id=tool_call.id),
+        ok,
+    )
 
 
 async def _execute_tool(tools_by_name: dict[str, Tool], tool_call: ToolCall) -> Any:

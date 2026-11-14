@@ -41,6 +41,7 @@ SCOPE_SEND = "https://www.googleapis.com/auth/gmail.send"
 REQUIRED_SCOPES = (SCOPE_READONLY, SCOPE_SEND)
 
 _STATE_PURPOSE = "gmail-oauth-state"
+DRIVE_STATE_PURPOSE = "drive-oauth-state"
 _STATE_TTL = timedelta(minutes=10)
 
 
@@ -57,24 +58,30 @@ class OAuthTokens:
     scopes: frozenset[str]
 
 
-def _state_key() -> str:
-    return hashlib.sha256(f"gmail-oauth:{settings.secret_key}".encode()).hexdigest()
+def _state_key(purpose: str = _STATE_PURPOSE) -> str:
+    # Una clave distinta por proposito ("gmail-oauth", "drive-oauth"): el
+    # state de una integracion no se puede presentar en el callback de la
+    # otra, ni como access token de la API.
+    label = purpose.removesuffix("-state")
+    return hashlib.sha256(f"{label}:{settings.secret_key}".encode()).hexdigest()
 
 
-def create_state(user_id: uuid.UUID, organization_id: uuid.UUID) -> str:
+def create_state(
+    user_id: uuid.UUID, organization_id: uuid.UUID, purpose: str = _STATE_PURPOSE
+) -> str:
     payload = {
-        "purpose": _STATE_PURPOSE,
+        "purpose": purpose,
         "uid": str(user_id),
         "org": str(organization_id),
         "exp": datetime.now(timezone.utc) + _STATE_TTL,
     }
-    return jwt.encode(payload, _state_key(), algorithm="HS256")
+    return jwt.encode(payload, _state_key(purpose), algorithm="HS256")
 
 
-def decode_state(state: str) -> OAuthState:
+def decode_state(state: str, purpose: str = _STATE_PURPOSE) -> OAuthState:
     try:
-        payload = jwt.decode(state, _state_key(), algorithms=["HS256"])
-        if payload.get("purpose") != _STATE_PURPOSE:
+        payload = jwt.decode(state, _state_key(purpose), algorithms=["HS256"])
+        if payload.get("purpose") != purpose:
             raise ValueError("purpose")
         return OAuthState(
             user_id=uuid.UUID(payload["uid"]), organization_id=uuid.UUID(payload["org"])
@@ -85,7 +92,26 @@ def decode_state(state: str) -> OAuthState:
 
 class GoogleOAuth:
     """Cliente del endpoint OAuth de Google. Inyectable en los servicios
-    para poder sustituirlo en tests sin red."""
+    para poder sustituirlo en tests sin red.
+
+    Por defecto es el de Gmail (sus scopes y su URI de retorno); otra
+    integracion de Google (Drive) lo instancia con los suyos -- el cliente
+    OAuth de Google Cloud (GOOGLE_CLIENT_ID/SECRET) es el mismo."""
+
+    def __init__(
+        self,
+        *,
+        scopes: tuple[str, ...] = REQUIRED_SCOPES,
+        redirect_uri: str | None = None,
+        scope_error: str = "Faltan permisos de Gmail: es necesario aceptar leer y enviar correos",
+    ) -> None:
+        self.scopes = scopes
+        self._redirect_uri = redirect_uri
+        self._scope_error = scope_error
+
+    @property
+    def redirect_uri(self) -> str:
+        return self._redirect_uri or settings.google_redirect_uri
 
     def _require_credentials(self) -> tuple[str, str]:
         if not settings.google_client_id or not settings.google_client_secret:
@@ -98,9 +124,9 @@ class GoogleOAuth:
         client_id, _ = self._require_credentials()
         params = {
             "client_id": client_id,
-            "redirect_uri": settings.google_redirect_uri,
+            "redirect_uri": self.redirect_uri,
             "response_type": "code",
-            "scope": " ".join(REQUIRED_SCOPES),
+            "scope": " ".join(self.scopes),
             # offline + consent: sin prompt=consent Google solo entrega
             # refresh_token la PRIMERA vez que la cuenta autoriza la app,
             # y una reconexion quedaria sin token.
@@ -117,19 +143,17 @@ class GoogleOAuth:
                 "code": code,
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "redirect_uri": settings.google_redirect_uri,
+                "redirect_uri": self.redirect_uri,
                 "grant_type": "authorization_code",
             },
             error_cls=GmailAuthorizationError,
         )
         scopes = frozenset(str(data.get("scope", "")).split())
-        missing = [s for s in REQUIRED_SCOPES if s not in scopes]
+        missing = [s for s in self.scopes if s not in scopes]
         if missing:
             # Consentimiento granular: el usuario puede desmarcar
             # permisos en la pantalla de Google.
-            raise GmailAuthorizationError(
-                "Faltan permisos de Gmail: es necesario aceptar leer y enviar correos"
-            )
+            raise GmailAuthorizationError(self._scope_error)
         return OAuthTokens(
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token"),

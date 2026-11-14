@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import can_manage_other_user, get_current_user, require_admin, verify_same_organization
+from app.gmail.outbound import send_user_invite_email
+from app.gmail.repository import GmailRepository
+from app.gmail.service import GmailConnectionService
 from app.users.exceptions import UserAlreadyExistsError, UserNotFoundError
 from app.users.models import User, UserRole
 from app.users.repository import UserRepository
@@ -17,11 +20,26 @@ def get_user_service(session: AsyncSession = Depends(get_db)) -> UserService:
     return UserService(UserRepository(session), session)
 
 
+def get_gmail_connection_service(session: AsyncSession = Depends(get_db)) -> GmailConnectionService:
+    # Mismo factory que app.gmail.api.get_connection_service, duplicado
+    # aca a proposito en vez de importarlo de ese modulo -- este router
+    # no necesita nada mas de app.gmail.api (sus rutas, sus otras
+    # dependencias), y este es literalmente el mismo patron de 2 lineas
+    # que cada dominio ya repite para su propio service (ver
+    # get_user_service arriba).
+    return GmailConnectionService(GmailRepository(session), session)
+
+
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(rate_limit)])
 
 
 @router.post("/", response_model=UserInviteResponse, status_code=201)
-async def create_user(data: UserCreate, service: UserService = Depends(get_user_service), admin: User = Depends(require_admin)):
+async def create_user(
+    data: UserCreate,
+    service: UserService = Depends(get_user_service),
+    admin: User = Depends(require_admin),
+    gmail_service: GmailConnectionService = Depends(get_gmail_connection_service),
+):
     # Mismas reglas que PATCH /{user_id}/role: nunca se crea un OWNER
     # por esta via (existe el flujo dedicado de ownership transfer), y
     # un ADMIN no puede crear pares ADMIN (solo OWNER crea ADMIN).
@@ -33,9 +51,24 @@ async def create_user(data: UserCreate, service: UserService = Depends(get_user_
         user, temporary_password = await service.create(admin, data)
     except UserAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+    # Si la organizacion tiene Gmail conectado y el envio no falla, la
+    # contraseña viaja solo por correo, nunca en esta respuesta. La
+    # tool de chat create_user (servida hoy por el servidor MCP, ver
+    # docs/roadmap.md seccion 2) reenvia a este mismo endpoint en vez
+    # de duplicar esta decision -- ya no hay dos caminos que puedan
+    # desincronizarse entre si.
+    sent = await send_user_invite_email(
+        gmail_service,
+        admin.organization_id,
+        full_name=user.full_name,
+        email=user.email,
+        temporary_password=temporary_password,
+    )
     return UserInviteResponse(
         **UserResponse.model_validate(user).model_dump(),
-        temporary_password=temporary_password,
+        temporary_password=None if sent else temporary_password,
+        password_sent_by_email=sent,
     )
 
 

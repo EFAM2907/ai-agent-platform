@@ -57,6 +57,7 @@ async def create_shipment(
     origin_city: str = "Bogotá",
     destination_city: str = "Medellín",
     with_event: bool = True,
+    last_event_at: datetime | None = None,
 ) -> Shipment:
     shipment = Shipment(
         organization_id=organization_id,
@@ -76,7 +77,7 @@ async def create_shipment(
                 organization_id=organization_id,
                 event_type=status,
                 city=origin_city,
-                occurred_at=datetime.now(timezone.utc),
+                occurred_at=last_event_at or datetime.now(timezone.utc),
             )
         )
         await session.flush()

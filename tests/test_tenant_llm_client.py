@@ -52,12 +52,14 @@ async def test_falls_back_to_emergency_key_and_warns_when_not_provisioned(caplog
     assert "sin litellm_virtual_key aprovisionada" in caplog.text
 
 
-def test_app_fails_to_start_without_emergency_fallback_key():
+def test_app_fails_to_start_without_emergency_fallback_key(monkeypatch):
     """Fail-fast: falta la key de emergencia -> la app no debe arrancar
     (ni, mucho menos, caer en silencio a la master key en el primer
     request). Se construye un Settings nuevo sin leer .env, con todos
     los demás campos requeridos presentes, para aislar el efecto de
-    omitir justo litellm_emergency_fallback_key."""
+    omitir justo litellm_emergency_fallback_key. Tambien se quita la
+    variable de entorno (CI la define): _env_file=None no la ignora."""
+    monkeypatch.delenv("LITELLM_EMERGENCY_FALLBACK_KEY", raising=False)
     with pytest.raises(pydantic.ValidationError, match="litellm_emergency_fallback_key"):
         Settings(
             _env_file=None,

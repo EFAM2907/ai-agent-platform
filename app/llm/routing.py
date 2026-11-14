@@ -26,10 +26,12 @@ still goes through the real LLM call.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from app.llm.client import LLMClient
 from app.llm.errors import LLMError
 from app.llm.prompts.loader import PromptLoader
-from app.llm.schemas import LLMRequest, Message, Role
+from app.llm.schemas import LLMRequest, LLMResponse, Message, Role
 
 _CLASSIFIER_PROMPT_NAME = "route_model_complexity"
 _CLASSIFIER_PROMPT_VERSION = 1
@@ -44,6 +46,22 @@ _TRIVIAL_PHRASES = frozenset({
     "buenas noches", "gracias", "muchas gracias", "thanks", "thank you",
     "ok", "okay", "vale", "adios", "bye", "chau", "listo", "perfecto",
 })
+
+
+# Por que se eligio un modelo (queda en la traza de cada turno).
+REASON_TRIVIAL = "trivial"  # saludo/cierre: ni se consulto al clasificador
+REASON_CLASSIFIED_CHEAP = "classified_cheap"
+REASON_CLASSIFIED_EXPENSIVE = "classified_expensive"
+REASON_CLASSIFIER_FAILED = "classifier_failed"  # fallo el clasificador -> caro, por seguridad
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    model: str
+    reason: str
+    # La respuesta del clasificador (tokens, latencia) cuando se le
+    # consulto -- para que la traza del turno cuente tambien su costo.
+    classifier_response: LLMResponse | None = None
 
 
 class ModelRouter:
@@ -68,6 +86,13 @@ class ModelRouter:
         )
 
     async def choose_model(self, user_message: str) -> str:
+        """Solo el nombre del modelo; ver decide() para saber tambien por
+        que se eligio."""
+        return (await self.decide(user_message)).model
+
+    async def decide(
+        self, user_message: str, *, trace: dict[str, str | None] | None = None
+    ) -> RoutingDecision:
         """Returns cheap_model or expensive_model -- never raises on
         classifier failure; if the classification call itself fails
         or comes back malformed, defaults to the expensive model.
@@ -76,11 +101,15 @@ class ModelRouter:
         a support agent that might execute real actions -- so the
         failure mode leans safe, not cheap.
 
+        `trace` (tenant_id, trace_id, session_id, user_id) se copia al
+        LLMRequest del clasificador para que Langfuse lo agrupe con el
+        resto del turno.
+
         Skips the classification call entirely for `_is_obviously_trivial`
         messages -- see the module docstring for why that is not the
         same thing as guessing from keywords."""
         if self._is_obviously_trivial(user_message):
-            return self._cheap_model
+            return RoutingDecision(self._cheap_model, REASON_TRIVIAL)
 
         request = LLMRequest(
             messages=[
@@ -91,6 +120,8 @@ class ModelRouter:
             ],
             model=self._cheap_model,
             response_schema=self._classifier_prompt.response_schema,
+            request_tag="model_router",
+            **(trace or {}),
         )
 
         try:
@@ -104,9 +135,11 @@ class ModelRouter:
             # Cualquier otra excepción (un bug real en este método) se
             # propaga sin disfrazarse -- no la escondemos como si
             # fuera un fallo esperado del clasificador.
-            return self._expensive_model
+            return RoutingDecision(self._expensive_model, REASON_CLASSIFIER_FAILED)
 
-        return self._expensive_model if needs_expensive else self._cheap_model
+        if needs_expensive:
+            return RoutingDecision(self._expensive_model, REASON_CLASSIFIED_EXPENSIVE, response)
+        return RoutingDecision(self._cheap_model, REASON_CLASSIFIED_CHEAP, response)
 
     @staticmethod
     def _is_obviously_trivial(user_message: str) -> bool:

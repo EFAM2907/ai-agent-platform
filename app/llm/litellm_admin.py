@@ -32,9 +32,20 @@ EMERGENCY_FALLBACK_KEY_ALIAS = "emergency-fallback"
 EMERGENCY_FALLBACK_KEY_MODELS = ["gemini-3.6-flash"]
 
 EVAL_KEY_ALIAS = "eval-harness"
-# Solo los dos modelos que ModelRouter realmente usa (barato + caro) --
-# no gpt-5.6-luna, que no participa del routing actual.
-EVAL_KEY_MODELS = ["gemini-3.6-flash", "claude-sonnet-5"]
+# Los modelos que usan los evals: los dos tiers actuales del
+# ModelRouter (ver CHEAP_MODEL/EXPENSIVE_MODEL en app.chat.service),
+# los modelos "reales" a los que se revertiran, el modelo que genera y
+# juzga en eval_harness/rag_eval.py, y gemini-embedding, sin el cual
+# rag_eval no puede ni recuperar chunks (EmbeddingClient). Si falta uno,
+# LiteLLM responde 401 key_model_access_denied. No incluye gpt-5.6-luna,
+# que no participa del routing actual.
+EVAL_KEY_MODELS = [
+    "gemini-3.6-flash",
+    "claude-sonnet-5",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-embedding",
+]
 
 
 async def _generate_key(payload: dict) -> str:

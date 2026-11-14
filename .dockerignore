@@ -1,0 +1,37 @@
+# Secrets must never end up inside an image: anyone who can pull the
+# image could read them from a layer. They are injected at runtime
+# (--env-file / environment variables / a secret manager) instead.
+.env
+.env.*
+!.env.example
+*.local.txt
+
+# Local environments and VCS metadata
+venv/
+.git/
+.gitignore
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor / tooling folders
+.vscode/
+.idea/
+.claude/
+.agents/
+
+# Not used by the API at runtime
+frontend/
+tests/
+eval_harness/
+docs/
+scripts/
+kb_content/
+litellm_config.yaml
+docker-compose.yml
+requirements-dev.txt
+README.md
+Dockerfile
+.dockerignore

@@ -96,7 +96,7 @@ class GmailConnectionService:
         """Envia un correo suelto (no una respuesta de tracking) desde
         el buzon conectado de la organizacion -- hoy, solo la
         invitacion de create_user con la contraseña temporal (ver
-        app.users.tools.create_user). Requiere una conexion activa;
+        app.users.api.create_user). Requiere una conexion activa;
         GmailNotConnectedError sube tal cual si no la hay o si Google la
         revoca a mitad de camino (y, en ese caso, la marca revocada
         antes de propagar), para que quien llama decida el fallback --

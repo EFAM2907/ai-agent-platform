@@ -1,0 +1,2 @@
+# Fake Fernet key that CI used briefly (commit below); it protected nothing and has been removed.
+37cb2dc644f13acc7d707550660bdec1c08f7c60:.github/workflows/ci.yml:generic-api-key:49

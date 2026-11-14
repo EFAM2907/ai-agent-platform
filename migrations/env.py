@@ -1,6 +1,6 @@
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy import engine_from_config
 from sqlalchemy.engine import Connection
 
@@ -31,6 +31,16 @@ config.set_main_option(
 )
 
 target_metadata = Base.metadata
+
+# Arbitrary constant key for a PostgreSQL session-level advisory lock
+# (pg_advisory_lock). Several API replicas can start at the same time and
+# each one runs `alembic upgrade head` from its entrypoint; Alembic does
+# not protect itself against concurrent runs, so two replicas could try to
+# apply the same migration at once. Holding this lock serializes them:
+# the first replica migrates, the others block here and, once released,
+# find nothing pending (the version table is already at head) and exit
+# cleanly. Any bigint works as long as nothing else uses it.
+MIGRATION_LOCK_KEY = 7_301_902_641
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -83,7 +93,22 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        do_run_migrations(connection)
+        connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": MIGRATION_LOCK_KEY})
+        # Close the transaction SQLAlchemy auto-began for the statement
+        # above; the lock is session-level, so it survives the commit.
+        # Without this, Alembic would run inside that outer transaction
+        # and the migrations would be rolled back when the connection closes.
+        connection.commit()
+        try:
+            do_run_migrations(connection)
+        finally:
+            # A failed migration leaves the connection in an aborted
+            # transaction; roll it back so the unlock statement can run.
+            connection.rollback()
+            connection.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": MIGRATION_LOCK_KEY}
+            )
+            connection.commit()
 
     connectable.dispose()
 
