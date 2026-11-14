@@ -46,7 +46,6 @@ jobs:
       ENVIRONMENT: development
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/ai_agent_platform_test
       SECRET_KEY: ci-fake-secret-key-not-a-real-secret
-      ENCRYPTION_KEY: L3OkBSlrOCcj-l053ueAT-H97q7aPmSYiT62cbPEk90= # fake Fernet key generated for CI only
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: "30"
       LITELLM_EMERGENCY_FALLBACK_KEY: ci-fake-litellm-key
@@ -62,6 +61,9 @@ jobs:
             mcp_server/requirements.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Generate a throwaway Fernet key
+        # Created per run so no key (even a fake one) is committed.
+        run: echo "ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
       - name: Create the test schema
         run: alembic upgrade head
       - name: Run tests
