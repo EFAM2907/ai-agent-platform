@@ -27,7 +27,6 @@ frontend/
 tests/
 eval_harness/
 docs/
-mcp_server/
 scripts/
 kb_content/
 litellm_config.yaml

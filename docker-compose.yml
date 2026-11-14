@@ -1,3 +1,21 @@
+# Full system (API included) in Docker -- the "app" profile is opt-in:
+#
+#   # bash
+#   MCP_SERVER_API_BASE_URL=http://api:8000 docker compose --profile app up -d
+#
+#   # PowerShell
+#   $env:MCP_SERVER_API_BASE_URL = "http://api:8000"; docker compose --profile app up -d
+#
+# Plain `docker compose up -d` (no profile) does NOT start the API: the
+# everyday flow keeps running uvicorn on the host (port 8000) and the
+# MCP server reaches it through host.docker.internal.
+#
+# Inside the compose network containers reach each other by SERVICE NAME
+# (db, redis, litellm, mcp-server, api), which Docker's DNS resolves, and
+# by the container's INTERNAL port: db listens on 5432 (the 5433 mapping
+# only exists for the host) and the API listens on 8000 (8001 is only the
+# host mapping). "localhost" inside a container is the container itself.
+
 services:
   db:
     # pgvector/pgvector:pg16 es un drop-in de postgres:16 con la
@@ -13,6 +31,11 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_agent_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -21,7 +44,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-      
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   litellm:
     # IMPORTANT: pin the version explicitly. A supply-chain incident
@@ -93,11 +120,49 @@ services:
       # en Docker Desktop (Windows/Mac). En Linux nativo sin Docker
       # Desktop, host.docker.internal no resuelve por defecto: ahi
       # hay que pasar MCP_SERVER_API_BASE_URL con la IP del host a mano.
+      # With the "app" profile, set MCP_SERVER_API_BASE_URL=http://api:8000.
+      # The JWKS URL is derived from API_BASE_URL (mcp_server/auth.py), so it
+      # follows automatically; the validated `iss` claim still comes from
+      # STS_ISSUER and is NOT affected. STS_JWKS_URL can override it if
+      # ever needed.
       - API_BASE_URL=${MCP_SERVER_API_BASE_URL:-http://host.docker.internal:8000}
       - MCP_SERVER_PORT=8100
 
-
-
+  api:
+    # Opt-in (profile "app"): see the command at the top of this file.
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Secrets and the rest of the settings come from .env; the values below
+    # override only what must differ inside the compose network.
+    env_file: .env
+    environment:
+      # Service name as hostname and INTERNAL port 5432 (not 5433), same
+      # asyncpg driver and credentials as the db service above.
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/ai_agent_platform
+      - REDIS_URL=redis://redis:6379/0
+      - LITELLM_BASE_URL=http://litellm:4000
+      - MCP_SERVER_URL=http://mcp-server:8100/mcp
+    ports:
+      # Loopback only. Host port 8001: 8000 is taken by the local uvicorn.
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    healthcheck:
+      # The slim image has no curl: use Python's stdlib. Liveness only, so
+      # a slow dependency never marks the container unhealthy.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:
