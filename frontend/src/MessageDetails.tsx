@@ -1,3 +1,4 @@
+import { Check, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError, getMessageTrace } from "./api";
 import { toolLabel } from "./toolLabels";
@@ -30,27 +31,27 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
       <dl className="trace__grid">
         <div>
           <dt>Modelo</dt>
-          <dd>{trace.model ?? "—"}</dd>
+          <dd className="mono">{trace.model ?? "—"}</dd>
         </div>
         <div>
           <dt>Tiempo total</dt>
-          <dd>{formatMs(trace.latency_ms)}</dd>
+          <dd className="mono">{formatMs(trace.latency_ms)}</dd>
         </div>
         <div>
           <dt>Tokens</dt>
-          <dd>
+          <dd className="mono">
             {trace.input_tokens} → {trace.output_tokens}
           </dd>
         </div>
         <div>
           <dt>Costo estimado</dt>
-          <dd>{formatCost(trace.cost_usd)}</dd>
+          <dd className="mono">{formatCost(trace.cost_usd)}</dd>
         </div>
       </dl>
 
       {trace.route.reason && (
         <p className="trace__line">
-          <b>Modelo elegido:</b> {ROUTE_REASONS[trace.route.reason] ?? trace.route.reason}
+          <span className="trace__muted">Modelo elegido:</span> {ROUTE_REASONS[trace.route.reason] ?? trace.route.reason}
         </p>
       )}
 
@@ -61,12 +62,20 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
             La búsqueda falló y se respondió sin contexto: {trace.retrieval.error}
           </p>
         ) : chunks.length === 0 ? (
-          <p className="trace__line">No había nada relevante en la base de conocimiento.</p>
+          <p className="trace__line trace__muted">No había nada relevante en la base de conocimiento.</p>
         ) : (
           <ul className="trace__list">
             {chunks.map((chunk) => (
-              <li key={chunk.chunk_id}>
-                {chunk.title} <span className="trace__muted">· relevancia {chunk.score.toFixed(3)}</span>
+              <li key={chunk.chunk_id} className="trace__chunk">
+                <span className="trace__chunk-title">{chunk.title}</span>
+                <span
+                  className="score-bar"
+                  role="img"
+                  aria-label={`Relevancia ${chunk.score.toFixed(3)}`}
+                >
+                  <span className="score-bar__fill" style={{ width: `${Math.max(0, Math.min(1, chunk.score)) * 100}%` }} />
+                </span>
+                <span className="trace__score mono">{chunk.score.toFixed(3)}</span>
               </li>
             ))}
           </ul>
@@ -78,11 +87,18 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
           <div className="trace__title">Herramientas</div>
           <ul className="trace__list">
             {trace.tool_calls.map((call, index) => (
-              <li key={index}>
-                <span className={call.ok ? "trace__ok" : "trace__fail"}>{call.ok ? "✓" : "✗"}</span>{" "}
-                {toolLabel(call.name)} <span className="trace__muted">· {formatMs(call.duration_ms)}</span>
+              <li key={index} className="trace__tool">
+                <div className="trace__tool-head">
+                  {call.ok ? (
+                    <Check size={14} strokeWidth={1.75} className="trace__ok" aria-label="Correcto" />
+                  ) : (
+                    <X size={14} strokeWidth={1.75} className="trace__fail" aria-label="Con error" />
+                  )}
+                  <span className="trace__tool-name">{toolLabel(call.name)}</span>
+                  <span className="trace__muted mono">{formatMs(call.duration_ms)}</span>
+                </div>
                 {Object.keys(call.arguments).length > 0 && (
-                  <code className="trace__args">{JSON.stringify(call.arguments)}</code>
+                  <code className="trace__args mono">{JSON.stringify(call.arguments)}</code>
                 )}
                 {call.error && <div className="trace__line trace__line--warn">{call.error}</div>}
               </li>
@@ -95,9 +111,12 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
         <div className="trace__block">
           <div className="trace__title">Delegación</div>
           <p className="trace__line">
-            Actor: {trace.delegation.actor} <span className="trace__muted">· en nombre de {trace.delegation.sub}</span>
+            Actor: <span className="mono">{trace.delegation.actor}</span>{" "}
+            <span className="trace__muted">
+              · en nombre de <span className="mono">{trace.delegation.sub}</span>
+            </span>
           </p>
-          <p className="trace__line trace__muted">
+          <p className="trace__line trace__muted mono">
             jti {trace.delegation.jti} · aud {trace.delegation.aud} · {(trace.delegation.scopes ?? []).join(", ")}
           </p>
         </div>
@@ -110,7 +129,7 @@ export function TraceView({ trace }: { trace: TraceDetail }) {
         </p>
       )}
 
-      <div className="trace__ref">Ref: {trace.trace_id.slice(0, 8)}</div>
+      <div className="trace__ref mono">Ref: {trace.trace_id.slice(0, 8)}</div>
     </div>
   );
 }

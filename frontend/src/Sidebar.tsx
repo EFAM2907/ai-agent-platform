@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatSessionSummary, DriveStatus, GmailStatus, Organization, UserProfile } from "./types";
-import { RobotIcon } from "./RobotIcon";
+import {
+  Activity,
+  BookOpen,
+  ChevronDown,
+  ChevronsUpDown,
+  KeyRound,
+  LogOut,
+  MessageSquare,
+  MoreHorizontal,
+  Pencil,
+  Plug,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 export type AppView = "chat" | "knowledge" | "integrations" | "traces";
 
@@ -28,6 +41,9 @@ interface SidebarProps {
   onChangeView: (view: AppView) => void;
   // ADMIN/OWNER ven las secciones de administracion.
   isAdmin: boolean;
+  // Mobile (< 768px): the sidebar is an off-canvas drawer.
+  open: boolean;
+  onClose: () => void;
 }
 
 function formatSessionLabel(session: ChatSessionSummary): string {
@@ -43,6 +59,28 @@ function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
+
+const ROLE_LABELS: Record<string, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  member: "Miembro",
+  viewer: "Lector",
+};
+
+const HISTORY_GROUPS = ["Hoy", "Ayer", "Últimos 7 días", "Anteriores"] as const;
+
+// Buckets a session by calendar day (local time) of its created_at.
+function historyGroup(createdAt: string, now: Date): (typeof HISTORY_GROUPS)[number] {
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(new Date(createdAt))) / 86_400_000);
+  if (days <= 0) return "Hoy";
+  if (days === 1) return "Ayer";
+  if (days <= 7) return "Últimos 7 días";
+  return "Anteriores";
+}
+
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform);
+const NEW_CHAT_HINT = IS_MAC ? "⌘K" : "Ctrl K";
 
 export function Sidebar({
   platformName,
@@ -62,6 +100,8 @@ export function Sidebar({
   view,
   onChangeView,
   isAdmin,
+  open,
+  onClose,
 }: SidebarProps) {
   const canSeeMembers = members !== null;
 
@@ -76,11 +116,15 @@ export function Sidebar({
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Cierra el menu si se hace click afuera -- sin esto, "..." se queda
-  // abierto para siempre hasta el proximo click en otro item.
+  // abierto para siempre hasta el proximo click en otro item. La fila
+  // que tiene el menu (o la confirmacion de borrado) abierto lleva
+  // menuRef, asi que clicks dentro de ella no cuentan como "afuera".
   useEffect(() => {
     if (!openMenuId) return;
     function handleClickOutside(event: MouseEvent) {
@@ -92,6 +136,47 @@ export function Sidebar({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [openMenuId]);
+
+  // Ctrl/Cmd + K starts a new chat from anywhere in the app.
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        onNewChat();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleShortcut);
+    return () => document.removeEventListener("keydown", handleShortcut);
+  }, [onNewChat, onClose]);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setUserMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [userMenuOpen]);
+
+  // Esc closes the mobile drawer.
+  useEffect(() => {
+    if (!open) return;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (renamingId) {
@@ -133,225 +218,276 @@ export function Sidebar({
     onDeleteSession(sessionId);
   }
 
-  return (
-    <aside className="sidebar">
-      <div className="sidebar__brand">
-        <div className="sidebar__brand-icon">
-          <RobotIcon size={18} />
-        </div>
-        <div className="sidebar__brand-name">{platformName}</div>
-      </div>
+  const now = new Date();
+  const groupedSessions = HISTORY_GROUPS.map((label) => ({
+    label,
+    items: sessions.filter((session) => historyGroup(session.created_at, now) === label),
+  })).filter((group) => group.items.length > 0);
 
-      <button type="button" className="sidebar__new-chat" onClick={onNewChat}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        Nuevo chat
+  function navItem(target: AppView, label: string, icon: React.ReactNode, extra?: React.ReactNode) {
+    return (
+      <button
+        type="button"
+        className={`sidebar__nav-item${view === target ? " sidebar__nav-item--active" : ""}`}
+        aria-current={view === target ? "page" : undefined}
+        onClick={() => {
+          onChangeView(target);
+          onClose();
+        }}
+      >
+        {icon}
+        <span>{label}</span>
+        {extra}
       </button>
+    );
+  }
 
-      {organization && (
-        <div className="sidebar__org">
-          <div className="sidebar__org-name">{organization.name}</div>
-          <div className="sidebar__org-plan">Plan {organization.plan_type}</div>
+  return (
+    <>
+      <div
+        className={`sidebar-backdrop${open ? " sidebar-backdrop--open" : ""}`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside className={`sidebar${open ? " sidebar--open" : ""}`} aria-label="Navegación principal">
+        <div className="sidebar__brand">
+          <span className="logo-mark" aria-hidden="true">
+            A
+          </span>
+          <div className="sidebar__brand-name">{platformName}</div>
         </div>
-      )}
 
-      <nav className="sidebar__nav" aria-label="Secciones">
+        {organization && (
+          <div className="sidebar__org" title={organization.name}>
+            <span className="sidebar__org-initials" aria-hidden="true">
+              {initials(organization.name) || "?"}
+            </span>
+            <span className="sidebar__org-name">{organization.name}</span>
+            <span className="badge badge--accent">{organization.plan_type}</span>
+            <ChevronsUpDown size={16} strokeWidth={1.75} aria-hidden="true" />
+          </div>
+        )}
+
         <button
           type="button"
-          className={`sidebar__nav-item${view === "chat" ? " sidebar__nav-item--active" : ""}`}
-          onClick={() => onChangeView("chat")}
+          className="sidebar__new-chat"
+          onClick={() => {
+            onNewChat();
+            onClose();
+          }}
         >
-          Chat
+          <Plus size={16} strokeWidth={1.75} />
+          <span>Nuevo chat</span>
+          <kbd>{NEW_CHAT_HINT}</kbd>
         </button>
-        {isAdmin && (
-          <>
-            <button
-              type="button"
-              className={`sidebar__nav-item${view === "knowledge" ? " sidebar__nav-item--active" : ""}`}
-              onClick={() => onChangeView("knowledge")}
-            >
-              Base de conocimiento
-            </button>
-            <button
-              type="button"
-              className={`sidebar__nav-item${view === "integrations" ? " sidebar__nav-item--active" : ""}`}
-              onClick={() => onChangeView("integrations")}
-            >
-              Integraciones
-              <span className="sidebar__nav-dots" aria-hidden="true">
-                <span
-                  className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
-                  title={gmailStatus?.connected ? "Gmail conectado" : "Gmail sin conectar"}
-                />
-                <span
-                  className={`sidebar__integration-dot${driveStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
-                  title={driveStatus?.connected ? "Drive conectado" : "Drive sin conectar"}
-                />
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`sidebar__nav-item${view === "traces" ? " sidebar__nav-item--active" : ""}`}
-              onClick={() => onChangeView("traces")}
-            >
-              Trazabilidad
-            </button>
-          </>
-        )}
-      </nav>
 
-      {canSeeMembers && (
-        <div className="sidebar__section">
-          <button
-            type="button"
-            className="sidebar__section-toggle"
-            onClick={() => setMembersExpanded((prev) => !prev)}
-            aria-expanded={membersExpanded}
-          >
-            <span className="sidebar__section-title">Miembros ({members!.length})</span>
-            <svg
-              className={`sidebar__section-chevron${membersExpanded ? " sidebar__section-chevron--open" : ""}`}
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </button>
-          {membersExpanded && (
-            <div className="sidebar__members">
-              {members!.slice(0, 6).map((member) => (
-                <div key={member.id} className="sidebar__member">
-                  <span className="sidebar__member-avatar">{initials(member.full_name)}</span>
-                  <span className="sidebar__member-name">{member.full_name}</span>
-                  <span className="sidebar__member-role">{member.role}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="sidebar__section sidebar__section--history">
-        <div className="sidebar__section-title">Historial</div>
-        <div className="sidebar__history">
-          {sessions.length === 0 && <div className="sidebar__history-empty">Sin conversaciones todavía</div>}
-          {sessions.map((session) => {
-            const isRenaming = renamingId === session.id;
-            const isMenuOpen = openMenuId === session.id;
-            const isConfirmingDelete = confirmingDeleteId === session.id;
-
-            return (
-              <div className="sidebar__history-row" key={session.id}>
-                {isRenaming ? (
-                  <input
-                    ref={renameInputRef}
-                    type="text"
-                    className="sidebar__history-rename-input"
-                    value={renameValue}
-                    maxLength={200}
-                    onChange={(event) => setRenameValue(event.target.value)}
-                    onBlur={() => commitRename(session)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        commitRename(session);
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        cancelRename();
-                      }
-                    }}
+        <nav className="sidebar__nav" aria-label="Secciones">
+          {navItem("chat", "Chat", <MessageSquare size={16} strokeWidth={1.75} />)}
+          {isAdmin && (
+            <>
+              {navItem("knowledge", "Base de conocimiento", <BookOpen size={16} strokeWidth={1.75} />)}
+              {navItem(
+                "integrations",
+                "Integraciones",
+                <Plug size={16} strokeWidth={1.75} />,
+                <span className="sidebar__nav-dots" aria-hidden="true">
+                  <span
+                    className={`sidebar__integration-dot${gmailStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+                    title={gmailStatus?.connected ? "Gmail conectado" : "Gmail sin conectar"}
                   />
-                ) : (
-                  <button
-                    type="button"
-                    title={session.title ?? undefined}
-                    className={`sidebar__history-item${session.id === activeSessionId ? " sidebar__history-item--active" : ""}`}
-                    onClick={() => onSelectSession(session.id)}
-                  >
-                    {formatSessionLabel(session)}
-                  </button>
-                )}
+                  <span
+                    className={`sidebar__integration-dot${driveStatus?.connected ? " sidebar__integration-dot--ok" : ""}`}
+                    title={driveStatus?.connected ? "Drive conectado" : "Drive sin conectar"}
+                  />
+                </span>,
+              )}
+              {navItem("traces", "Trazabilidad", <Activity size={16} strokeWidth={1.75} />)}
+            </>
+          )}
+        </nav>
 
-                {!isRenaming && (
-                  <div className="sidebar__history-menu-wrap" ref={isMenuOpen ? menuRef : undefined}>
-                    <button
-                      type="button"
-                      className={`sidebar__history-menu-btn${isMenuOpen ? " sidebar__history-menu-btn--open" : ""}`}
-                      onClick={() => toggleMenu(session.id)}
-                      aria-label="Más opciones"
-                    >
-                      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                        <circle cx="12" cy="5" r="1.8" />
-                        <circle cx="12" cy="12" r="1.8" />
-                        <circle cx="12" cy="19" r="1.8" />
-                      </svg>
-                    </button>
-
-                    {isMenuOpen && (
-                      <div className="sidebar__history-menu">
-                        {isConfirmingDelete ? (
-                          <>
-                            <span className="sidebar__history-menu-confirm">¿Eliminar esta conversación?</span>
-                            <button type="button" className="sidebar__history-menu-danger" onClick={() => confirmDelete(session.id)}>
-                              Sí, eliminar
-                            </button>
-                            <button type="button" onClick={() => setConfirmingDeleteId(null)}>
-                              Cancelar
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button type="button" onClick={() => startRename(session)}>
-                              Renombrar
-                            </button>
-                            <button type="button" className="sidebar__history-menu-danger" onClick={() => askDelete(session.id)}>
-                              Eliminar
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
+        {canSeeMembers && (
+          <div className="sidebar__section">
+            <button
+              type="button"
+              className="sidebar__section-toggle"
+              onClick={() => setMembersExpanded((prev) => !prev)}
+              aria-expanded={membersExpanded}
+            >
+              <span className="sidebar__section-title">
+                Miembros <span className="mono">({members!.length})</span>
+              </span>
+              <ChevronDown
+                size={14}
+                strokeWidth={1.75}
+                className={`sidebar__section-chevron${membersExpanded ? " sidebar__section-chevron--open" : ""}`}
+              />
+            </button>
+            {membersExpanded && (
+              <div className="sidebar__members">
+                {members!.slice(0, 6).map((member) => (
+                  <div key={member.id} className="sidebar__member">
+                    <span className="avatar">{initials(member.full_name)}</span>
+                    <span className="sidebar__member-name">{member.full_name}</span>
+                    <span className="badge">{ROLE_LABELS[member.role] ?? member.role}</span>
                   </div>
-                )}
+                ))}
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {currentUser && (
-        <div className="sidebar__footer">
-          <span className="sidebar__member-avatar">{initials(currentUser.full_name)}</span>
-          <div className="sidebar__footer-info">
-            <div className="sidebar__footer-name">{currentUser.full_name}</div>
-            <div className="sidebar__footer-email">{currentUser.email}</div>
+            )}
           </div>
-          <button
-            type="button"
-            className="sidebar__logout sidebar__logout--neutral"
-            onClick={onChangePassword}
-            aria-label="Cambiar contraseña"
-            title="Cambiar contraseña"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <rect x="5" y="11" width="14" height="9" rx="2" />
-              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-            </svg>
-          </button>
-          <button type="button" className="sidebar__logout" onClick={onLogout} aria-label="Cerrar sesión">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
-            </svg>
-          </button>
+        )}
+
+        <div className="sidebar__section sidebar__section--history">
+          <div className="sidebar__history">
+            {sessions.length === 0 && <div className="sidebar__history-empty">Sin conversaciones todavía</div>}
+            {groupedSessions.map((group) => (
+              <div key={group.label} role="group" aria-label={group.label}>
+                <div className="sidebar__history-label">{group.label}</div>
+                {group.items.map((session) => {
+                  const isRenaming = renamingId === session.id;
+                  const isMenuOpen = openMenuId === session.id;
+                  const isConfirmingDelete = confirmingDeleteId === session.id;
+
+                  return (
+                    <div
+                      className="sidebar__history-row"
+                      key={session.id}
+                      ref={isMenuOpen || isConfirmingDelete ? menuRef : undefined}
+                    >
+                      {isConfirmingDelete ? (
+                        <div className="sidebar__history-confirm" role="alert">
+                          <span>¿Eliminar?</span>
+                          <button type="button" onClick={() => confirmDelete(session.id)}>
+                            Eliminar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmingDeleteId(null);
+                              setOpenMenuId(null);
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : isRenaming ? (
+                        <input
+                          ref={renameInputRef}
+                          type="text"
+                          className="sidebar__history-rename-input"
+                          aria-label="Nuevo nombre de la conversación"
+                          value={renameValue}
+                          maxLength={200}
+                          onChange={(event) => setRenameValue(event.target.value)}
+                          onBlur={() => commitRename(session)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitRename(session);
+                            } else if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelRename();
+                            }
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          title={session.title ?? undefined}
+                          className={`sidebar__history-item${session.id === activeSessionId ? " sidebar__history-item--active" : ""}`}
+                          aria-current={session.id === activeSessionId ? "true" : undefined}
+                          onClick={() => {
+                            onSelectSession(session.id);
+                            onClose();
+                          }}
+                        >
+                          {formatSessionLabel(session)}
+                        </button>
+                      )}
+
+                      {!isRenaming && !isConfirmingDelete && (
+                        <div className="sidebar__history-menu-wrap">
+                          <button
+                            type="button"
+                            className={`sidebar__history-menu-btn${isMenuOpen ? " sidebar__history-menu-btn--open" : ""}`}
+                            onClick={() => toggleMenu(session.id)}
+                            aria-label="Más opciones"
+                            aria-expanded={isMenuOpen}
+                          >
+                            <MoreHorizontal size={16} strokeWidth={1.75} />
+                          </button>
+
+                          {isMenuOpen && (
+                            <div className="sidebar__history-menu">
+                              <button type="button" onClick={() => startRename(session)}>
+                                <Pencil size={14} strokeWidth={1.75} />
+                                Renombrar
+                              </button>
+                              <button
+                                type="button"
+                                className="sidebar__history-menu-danger"
+                                onClick={() => askDelete(session.id)}
+                              >
+                                <Trash2 size={14} strokeWidth={1.75} />
+                                Eliminar
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
-      )}
-    </aside>
+
+        {currentUser && (
+          <div className="sidebar__footer-wrap" ref={userMenuRef}>
+            {userMenuOpen && (
+              <div className="sidebar__user-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    onChangePassword();
+                  }}
+                >
+                  <KeyRound size={16} strokeWidth={1.75} />
+                  Cambiar contraseña
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    onLogout();
+                  }}
+                >
+                  <LogOut size={16} strokeWidth={1.75} />
+                  Cerrar sesión
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              className="sidebar__footer"
+              aria-haspopup="menu"
+              aria-expanded={userMenuOpen}
+              onClick={() => setUserMenuOpen((prev) => !prev)}
+            >
+              <span className="avatar">{initials(currentUser.full_name)}</span>
+              <div className="sidebar__footer-info">
+                <div className="sidebar__footer-name">{currentUser.full_name}</div>
+                <div className="sidebar__footer-email">{currentUser.email}</div>
+              </div>
+              <span className="badge">{ROLE_LABELS[currentUser.role] ?? currentUser.role}</span>
+            </button>
+          </div>
+        )}
+      </aside>
+    </>
   );
 }
