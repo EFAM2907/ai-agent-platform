@@ -47,14 +47,23 @@ class LiteLLMProvider(LLMProvider):
 
     name = "litellm"
 
-    # Sin esto, el SDK de OpenAI usa su default de 10 minutos -- si el
-    # proxy LiteLLM o el proveedor detras se cuelgan (o se quedan
-    # reintentando internamente, ver router_settings.num_retries en
-    # litellm_config.yaml), una sola llamada de chat puede colgar el
-    # request muchisimo mas de lo que cualquier usuario va a esperar.
-    # 60s ya es generoso para una respuesta de chat real, incluso con
-    # "thinking" activado.
-    _REQUEST_TIMEOUT_SECONDS = 60.0
+    # Sin timeout explicito, el SDK de OpenAI espera 10 minutos por defecto.
+    #
+    # Debe ser MAYOR que lo que LiteLLM tarda en agotar sus propios intentos
+    # (router_settings en litellm_config.yaml: 2 intentos de 75 s = 150 s),
+    # porque es LiteLLM quien reintenta y decide cuando rendirse. Con 60 s
+    # esta capa se rendia ANTES que LiteLLM: tiraba llamadas validas lentas
+    # (se midieron respuestas exitosas de 68 s con "thinking" de Gemini) y
+    # dejaba la llamada original viva en el proxy hasta el limite de Cloud
+    # Run, pagando los tokens dos veces.
+    _REQUEST_TIMEOUT_SECONDS = 160.0
+
+    # El SDK de OpenAI reintenta por su cuenta 2 veces ante timeouts, 429 y
+    # 5xx. Aqui NO debe: los reintentos tecnicos son solo de LiteLLM (ver el
+    # docstring de app/llm/client.py, que ya lo exigia) -- si no, un solo
+    # timeout se multiplica entre capas y cada reintento duplica la llamada
+    # al modelo.
+    _MAX_RETRIES = 0
 
     def __init__(self, virtual_key: str) -> None:
         """virtual_key: SIEMPRE una virtual key -- la del tenant si ya
@@ -68,6 +77,7 @@ class LiteLLMProvider(LLMProvider):
             base_url=settings.litellm_base_url.rstrip("/"),
             api_key=virtual_key,
             timeout=self._REQUEST_TIMEOUT_SECONDS,
+            max_retries=self._MAX_RETRIES,
         )
 
     def supports_structured_output(self) -> bool:

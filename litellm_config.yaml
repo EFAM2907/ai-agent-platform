@@ -108,7 +108,22 @@ router_settings:
     # sin credito en vez de volver al par flash-lite -- evita un ciclo
     # entre los tres modelos "baratos" cuando los tres estan agotados.
     - deepseek-chat: ["gemini-3.6-flash", "gpt-5.6-luna"]
-  num_retries: 2
+  # Presupuesto de espera por capas -- cada una debe esperar MAS que la de
+  # dentro, y SOLO LiteLLM reintenta (ver app/llm/client.py):
+  #
+  #   intento de LiteLLM al modelo   timeout = 75 s   (aca)
+  #   reintentos de LiteLLM          num_retries = 1  (aca) -> 2 intentos
+  #   API -> LiteLLM                 160 s, max_retries=0
+  #                                  (app/llm/litellm/litellm_provider.py)
+  #   Cloud Run del servicio litellm --timeout 170    (docs/DEPLOY_GCP.md)
+  #
+  # 75 s sale de medir llamadas exitosas reales (0,7 s a 68 s; Gemini
+  # "razona" y eso domina). Sin esto el default de LiteLLM es ~6000 s: una
+  # llamada colgada por saturacion de Google (503 "high demand") ocupaba
+  # el servicio hasta el limite de Cloud Run (300 s, 504) aunque la API ya
+  # se hubiera rendido. Con solo 14 muestras, revisar si cambia el patron.
+  timeout: 75
+  num_retries: 1
   cooldown_time: 60
 
 litellm_settings:
