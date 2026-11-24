@@ -267,6 +267,76 @@ que Cloud Run puede alcanzarlo.
 En Vercel: `VITE_API_BASE_URL=$API_URL` y redespliega (Vite lo incrusta en
 build). Luego pon la URL final de Vercel en `CORS_ORIGINS` de la API.
 
+### 11b. Redis (Memorystore) para el limitador de peticiones
+
+Sin Redis la API funciona (el limitador es *fail-open*), pero **no limita
+intentos de login ni de registro** y cada petición deja un traceback
+`ConnectionRefusedError ... 6379` en los logs. Memorystore solo tiene IP
+privada, por eso la API necesita salida por la VPC (Direct VPC egress):
+
+```powershell
+gcloud services enable compute.googleapis.com redis.googleapis.com   # crea la red "default"
+gcloud redis instances create ai-agent-redis --region=$REGION --tier=basic --size=1 --network=default --redis-version=redis_7_2
+$REDIS_IP = gcloud redis instances describe ai-agent-redis --region=$REGION --format="value(host)"
+gcloud run services update api --region $REGION --network=default --subnet=default --vpc-egress=private-ranges-only --update-env-vars "REDIS_URL=redis://${REDIS_IP}:6379/0"
+```
+
+- **Cobra por hora** mientras exista (nivel básico de 1 GB: del orden de
+  35 USD/mes, cifra por verificar). Se borra con
+  `gcloud redis instances delete ai-agent-redis --region $REGION`.
+- `--vpc-egress=private-ranges-only` manda por la VPC solo el tráfico a IPs
+  privadas (Redis); las llamadas a LiteLLM y al MCP siguen saliendo por su
+  URL pública.
+- La IP de Redis (`10.89.x.x`) no está en la subred `10.128.0.0/20`: viene
+  de un rango reservado para servicios gestionados, y aun así lo cubre
+  `private-ranges-only`.
+
+> **Verificado:** tras conectarlo, `/health` dio `redis: ok`, no quedaron
+> tracebacks de Redis y el limitador de login cuenta (el 6.º intento
+> fallido seguido devuelve `429` con `Retry-After: 60`).
+>
+> **Ojo con `litellm: degraded` en `/health`:** la comprobación de salud da
+> solo 2 s a LiteLLM (`CHECK_TIMEOUT_SECONDS` en `app/health/api.py`). Con
+> escala a cero, la primera consulta tras un rato inactivo cae en el
+> arranque en frío y sale `degraded`; con LiteLLM despierto sale `ok`. Solo
+> la base de datos decide el código HTTP, así que no es un fallo.
+
+### 11c. Cargar datos de ejemplo con un Cloud Run Job
+
+Los scripts de `scripts/` necesitan alcanzar la base de Cloud SQL. En vez de
+descargar el Auth Proxy o abrir la red de la instancia, se ejecutan **dentro
+de GCP** como un *Cloud Run Job*, conectado por el mismo socket que la API.
+La imagen de la API no lleva `scripts/` ni `kb_content/`, así que se usa una
+imagen derivada (`Dockerfile.jobs`, con su `Dockerfile.jobs.dockerignore`):
+
+```powershell
+docker build -f Dockerfile.jobs --build-arg BASE_IMAGE="$REGISTRY/api:v1" -t "$REGISTRY/jobs:v1" .
+docker push "$REGISTRY/jobs:v1"      # si da timeout, repetir: reanuda donde quedó
+
+gcloud run jobs create ai-agent-tools --image "$REGISTRY/jobs:v1" --region $REGION `
+  --service-account "api-sa@$PROJECT_ID.iam.gserviceaccount.com" `
+  --memory 1Gi --max-retries 0 --task-timeout 1800 --set-cloudsql-instances $CONN `
+  --command python --args="-m,scripts.list_organizations" `
+  --set-secrets "DATABASE_URL=DATABASE_URL_API:latest,SECRET_KEY=SECRET_KEY:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,STS_PRIVATE_KEY=STS_PRIVATE_KEY:latest,LITELLM_MASTER_KEY=LITELLM_MASTER_KEY:latest,LITELLM_EMERGENCY_FALLBACK_KEY=LITELLM_EMERGENCY_FALLBACK_KEY:latest" `
+  --set-env-vars "ENVIRONMENT=production,ALGORITHM=HS256,ACCESS_TOKEN_EXPIRE_MINUTES=60,LITELLM_BASE_URL=<url-litellm>,CORS_ORIGINS=<url-frontend>"
+
+# Ejecutar con otros argumentos (cada ejecución arranca un contenedor nuevo):
+gcloud run jobs execute ai-agent-tools --region $REGION --wait --args="-m,scripts.list_organizations"
+gcloud run jobs execute ai-agent-tools --region $REGION --wait --args="-m,scripts.seed_inter_rapidisimo_shipments,<org_id>"
+gcloud run jobs execute ai-agent-tools --region $REGION --wait --args="-m,scripts.ingest_kb_articles,<org_id>,--dir,inter_rapidisimo"
+```
+
+`scripts.list_organizations` es de solo lectura: muestra el id de cada
+organización y los conteos (KB, clientes, envíos). La salida del job se lee
+en Cloud Logging (`resource.type=cloud_run_job`).
+
+> **Verificado:** 6 clientes y 15 envíos sembrados; 31 documentos de
+> `kb_content/inter_rapidisimo/` indexados (266 chunks). La ingesta tardó
+> ~5 min porque la cuota de embeddings de Gemini se agotó dos veces y el
+> script esperó 65 s cada vez (`rate_limit_attempts`), sin fallar. Cada
+> ejecución del job tarda 1-2 min solo en arrancar. El seed **no es
+> idempotente** (ver su docstring): no repetirlo sobre la misma organización.
+
 ## 12. Comprobaciones
 
 Las de DEPLOY.md §5, con las URLs de `run.app`. Primero:
@@ -294,6 +364,7 @@ curl "$API_URL/health"
   gcloud run services delete mcp-server --region $REGION
   gcloud run services delete api --region $REGION
   gcloud run services delete litellm --region $REGION
+  gcloud redis instances delete ai-agent-redis --region $REGION
   gcloud sql instances delete $SQL
   ```
 

@@ -81,11 +81,14 @@ def main() -> int:
         print("Faltan email o contraseña.")
         return 2
 
-    step("3) Crear organizacion + dueño (POST /organizations/)")
+    # El registro publico es /auth/register (crea organizacion + dueño y
+    # devuelve la sesion). POST /organizations/ NO sirve para esto: su router
+    # depende de get_current_user via rate_limit, asi que exige estar logueado.
+    step("3) Registrar organizacion + dueño (POST /auth/register)")
     status, body = call(
         "POST",
         base,
-        "/organizations/",
+        "/auth/register",
         {
             "name": name,
             "tax_id": tax_id,
@@ -94,12 +97,12 @@ def main() -> int:
             "owner_full_name": full_name,
         },
     )
-    org_id = None
-    if status == 201:
-        org_id = body.get("id") if isinstance(body, dict) else None
-        print(f"HTTP 201: organizacion creada (id={org_id})")
+    token = None
+    if status == 201 and isinstance(body, dict) and body.get("access_token"):
+        token = body["access_token"]
+        print("HTTP 201: organizacion creada y sesion iniciada")
     elif status == 409:
-        print(f"HTTP 409: ya existe ({short(body, 200)}). Se sigue con el login.")
+        print(f"HTTP 409: ya existe ({short(body, 200)}). Se hace login normal.")
     else:
         print(f"HTTP {status}: {short(body)}")
         return 1
@@ -120,6 +123,7 @@ def main() -> int:
     step("5) Quien soy (GET /users/me)")
     status, body = call("GET", base, "/users/me", token=token)
     print(f"HTTP {status}: {short(body, 400)}")
+    org_id = body.get("organization_id") if isinstance(body, dict) else None
 
     step("6) Chat (POST /chat/messages) -- ejercita LiteLLM y, si la usa, el MCP")
     question = "Dime quien soy y a que organizacion pertenezco, usando tus herramientas."

@@ -1,0 +1,25 @@
+# Imagen de HERRAMIENTAS / JOBS: la imagen de la API mas scripts/ y kb_content/.
+#
+# La imagen de la API no lleva scripts/ ni kb_content/ (ver su Dockerfile y
+# docs/DEPLOY.md §6). Esta imagen los anade para ejecutar tareas puntuales o
+# periodicas como Cloud Run Jobs, conectadas a la base por el mismo socket:
+#   - python -m scripts.list_organizations
+#   - python -m scripts.seed_inter_rapidisimo_shipments <org_id>
+#   - python -m scripts.ingest_kb_articles <org_id> --dir inter_rapidisimo
+#   - (a futuro) el poller de Gmail y el programador de la KB.
+#
+# Se construye SOBRE la imagen de la API para no duplicar dependencias:
+#   docker build -f Dockerfile.jobs --build-arg BASE_IMAGE=<registro>/api:v1 -t <registro>/jobs:v1 .
+#
+# Usa su propio Dockerfile.jobs.dockerignore (BuildKit lo prefiere al
+# .dockerignore general): aqui scripts/ y kb_content/ SI deben entrar.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# El WORKDIR (/app) y el usuario sin privilegios vienen de la imagen base.
+COPY --chown=appuser:appuser scripts/ ./scripts/
+COPY --chown=appuser:appuser kb_content/ ./kb_content/
+
+# Sin ENTRYPOINT/CMD propios a proposito: cada Job define su comando
+# (--command python --args -m,scripts.<nombre>,...). El CMD heredado de la
+# API (entrypoint.sh: migraciones + uvicorn) NO debe ejecutarse aqui.
