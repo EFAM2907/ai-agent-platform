@@ -7,9 +7,12 @@ import remarkGfm from "remark-gfm";
 // el modelo (o un dato que el modelo repite) escriba como <script> se
 // muestra como texto, nunca se ejecuta -- y los enlaces se abren en una
 // pestaña nueva sin darle acceso a esta ventana (noopener).
-export function renderMessageContent(content: string): ReactNode {
+//
+// `streaming` agrega la clase que dibuja el cursor parpadeante al final
+// del ultimo bloque de texto (ver .prose-doc.is-streaming en chat.css).
+export function renderMessageContent(content: string, opts?: { streaming?: boolean }): ReactNode {
   return (
-    <div className="md">
+    <div className={`prose-doc${opts?.streaming ? " is-streaming" : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -21,7 +24,7 @@ export function renderMessageContent(content: string): ReactNode {
           // Las tablas anchas hacen scroll dentro del mensaje en vez de
           // ensanchar toda la página.
           table: ({ children }) => (
-            <div className="md__table-wrap">
+            <div className="prose-doc__table">
               <table>{children}</table>
             </div>
           ),

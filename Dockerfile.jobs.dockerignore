@@ -1,0 +1,36 @@
+# Ignora para la imagen de jobs (Dockerfile.jobs). Igual que .dockerignore,
+# pero SIN excluir scripts/ ni kb_content/, que aqui si se copian.
+
+# Los secretos nunca deben acabar dentro de una imagen.
+.env
+.env.*
+!.env.example
+*.local.txt
+
+# Entornos locales y metadatos de VCS
+venv/
+.git/
+.gitignore
+
+# Caches de Python (con **/ para cubrir tambien las subcarpetas)
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+
+# Editores / herramientas
+.vscode/
+.idea/
+.claude/
+.agents/
+
+# No se usa en runtime
+frontend/
+tests/
+eval_harness/
+docs/
+docker-compose.yml
+requirements-dev.txt
+README.md
+Dockerfile
+Dockerfile.*
+.dockerignore

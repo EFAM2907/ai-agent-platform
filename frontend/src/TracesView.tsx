@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { AlertCircle, RefreshCw, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getTrace, getTraceStats, listTraces } from "./api";
 import { TraceView, formatCost, formatMs } from "./MessageDetails";
+import { PageShell } from "./PageShell";
+import { toolLabel } from "./toolLabels";
 import type { TraceDetail, TraceList, TraceStats } from "./types";
 
 function formatDate(value: string): string {
@@ -8,6 +11,72 @@ function formatDate(value: string): string {
 }
 
 const PAGE_SIZE = 20;
+
+// Horizontal bars built with plain CSS (no chart library). Widths are
+// relative to the largest value in the list.
+function BarList({
+  rows,
+  renderName,
+}: {
+  rows: { name: string; count: number; failed?: number }[];
+  renderName?: (name: string) => string;
+}) {
+  const max = Math.max(1, ...rows.map((row) => row.count));
+  return (
+    <ul className="bars">
+      {rows.map((row) => (
+        <li key={row.name} className="bars__row">
+          <span className="bars__name" title={row.name}>
+            {renderName ? renderName(row.name) : row.name}
+          </span>
+          <span className="bars__value mono">{row.count}</span>
+          <span className="bars__track" role="img" aria-label={`${row.count} de ${max}`}>
+            <span className="bars__fill" style={{ width: `${(row.count / max) * 100}%` }} />
+          </span>
+          {row.failed ? <span className="bars__failed mono">{row.failed} fallaron</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Right-side panel with the detail of one turn. Closes with Esc, the close
+// button or a click on the backdrop; full screen on mobile.
+function TraceDrawer({ trace, onClose }: { trace: TraceDetail; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [onClose]);
+
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Detalle del turno"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="drawer__head">
+          <h2 className="drawer__title">Detalle del turno</h2>
+          <span className="drawer__sub mono">{formatDate(trace.created_at)}</span>
+          <button ref={closeRef} type="button" className="drawer__close" onClick={onClose} aria-label="Cerrar detalle">
+            <X size={16} strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="drawer__body">
+          <TraceView trace={trace} />
+        </div>
+      </aside>
+    </div>
+  );
+}
 
 export function TracesView() {
   const [days, setDays] = useState(7);
@@ -44,32 +113,45 @@ export function TracesView() {
     }
   }
 
+  const closeDrawer = useCallback(() => setSelected(null), []);
+
   const totalPages = list ? Math.max(1, Math.ceil(list.total / PAGE_SIZE)) : 1;
   const errorRate = stats && stats.turns > 0 ? Math.round((stats.errors / stats.turns) * 100) : 0;
 
   return (
-    <div className="view">
-      <header className="view__header">
-        <h1>Trazabilidad</h1>
-        <p>Cada respuesta del asistente: qué modelo la generó, qué consultó y cuánto costó. Solo administradores.</p>
-      </header>
-
-      {error && <div className="login-error">{error}</div>}
-
-      <div className="row row--between">
-        <label className="field-inline">
-          Período
-          <select value={days} onChange={(event) => { setDays(Number(event.target.value)); setPage(0); }}>
-            <option value={1}>Último día</option>
-            <option value={7}>Últimos 7 días</option>
-            <option value={30}>Últimos 30 días</option>
-            <option value={90}>Últimos 90 días</option>
-          </select>
-        </label>
-        <button type="button" className="login-secondary" onClick={() => void load()}>
-          Actualizar
-        </button>
-      </div>
+    <PageShell
+      title="Trazabilidad"
+      description="Cada respuesta del asistente: qué modelo la generó, qué consultó y cuánto costó. Solo administradores."
+      actions={
+        <>
+          <label className="field-inline">
+            Período
+            <select
+              value={days}
+              onChange={(event) => {
+                setDays(Number(event.target.value));
+                setPage(0);
+              }}
+            >
+              <option value={1}>Último día</option>
+              <option value={7}>Últimos 7 días</option>
+              <option value={30}>Últimos 30 días</option>
+              <option value={90}>Últimos 90 días</option>
+            </select>
+          </label>
+          <button type="button" className="btn btn--sm" onClick={() => void load()}>
+            <RefreshCw size={14} strokeWidth={1.75} />
+            Actualizar
+          </button>
+        </>
+      }
+    >
+      {error && (
+        <div className="notice notice--error" role="alert">
+          <AlertCircle size={16} strokeWidth={1.75} />
+          {error}
+        </div>
+      )}
 
       <div className="stat-cards">
         <div className="stat-card">
@@ -80,24 +162,34 @@ export function TracesView() {
           <div className={`stat-card__value${stats && stats.errors > 0 ? " text-bad" : ""}`}>
             {stats ? `${errorRate}%` : "—"}
           </div>
-          <div className="stat-card__label">Con error ({stats?.errors ?? 0})</div>
+          <div className="stat-card__label">
+            Con error (<span className="mono">{stats?.errors ?? 0}</span>)
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__value">{stats ? formatMs(stats.avg_latency_ms) : "—"}</div>
-          <div className="stat-card__label">Tiempo medio · p95 {stats ? formatMs(stats.p95_latency_ms) : "—"}</div>
+          <div className="stat-card__label">
+            Tiempo medio · p95 <span className="mono">{stats ? formatMs(stats.p95_latency_ms) : "—"}</span>
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__value">
             {stats ? (stats.input_tokens + stats.output_tokens).toLocaleString("es-CO") : "—"}
           </div>
-          <div className="stat-card__label">Tokens · {stats ? formatCost(stats.cost_usd) : "—"}</div>
+          <div className="stat-card__label">
+            Tokens · <span className="mono">{stats ? formatCost(stats.cost_usd) : "—"}</span>
+          </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__value">
             {stats ? (
               <>
-                <span className="text-ok">👍 {stats.feedback_positive}</span>{" "}
-                <span className="text-bad">👎 {stats.feedback_negative}</span>
+                <span className="text-ok">
+                  <ThumbsUp size={16} strokeWidth={1.75} aria-label="Positivas" /> {stats.feedback_positive}
+                </span>{" "}
+                <span className="text-bad">
+                  <ThumbsDown size={16} strokeWidth={1.75} aria-label="Negativas" /> {stats.feedback_negative}
+                </span>
               </>
             ) : (
               "—"
@@ -111,27 +203,14 @@ export function TracesView() {
         <div className="two-cols">
           <section className="card">
             <h2>Modelos</h2>
-            <ul className="plain-list">
-              {stats.by_model.map((row) => (
-                <li key={row.name}>
-                  {row.name} <span className="muted">· {row.count} turnos</span>
-                </li>
-              ))}
-            </ul>
+            <BarList rows={stats.by_model} />
           </section>
           <section className="card">
             <h2>Herramientas más usadas</h2>
             {stats.by_tool.length === 0 ? (
               <p className="muted">Ninguna herramienta en este período.</p>
             ) : (
-              <ul className="plain-list">
-                {stats.by_tool.slice(0, 8).map((row) => (
-                  <li key={row.name}>
-                    {row.name} <span className="muted">· {row.count}</span>
-                    {row.failed > 0 && <span className="text-bad"> · {row.failed} fallaron</span>}
-                  </li>
-                ))}
-              </ul>
+              <BarList rows={stats.by_tool.slice(0, 8)} renderName={toolLabel} />
             )}
           </section>
         </div>
@@ -139,10 +218,18 @@ export function TracesView() {
 
       <section className="card">
         <div className="card__head">
-          <h2>Turnos recientes ({list?.total ?? 0})</h2>
+          <h2>
+            Turnos recientes <span className="mono">({list?.total ?? 0})</span>
+          </h2>
           <label className="field-inline">
             Estado
-            <select value={status} onChange={(event) => { setStatus(event.target.value as "" | "ok" | "error"); setPage(0); }}>
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value as "" | "ok" | "error");
+                setPage(0);
+              }}
+            >
               <option value="">Todos</option>
               <option value="ok">Correctos</option>
               <option value="error">Con error</option>
@@ -162,26 +249,34 @@ export function TracesView() {
                   <th>Fecha</th>
                   <th>Estado</th>
                   <th>Modelo</th>
-                  <th>Tiempo</th>
-                  <th>Tokens</th>
-                  <th>KB</th>
-                  <th>Herram.</th>
+                  <th className="table__num">Tiempo</th>
+                  <th className="table__num">Tokens</th>
+                  <th className="table__num">KB</th>
+                  <th className="table__num">Herram.</th>
                 </tr>
               </thead>
               <tbody>
                 {list.traces.map((trace) => (
-                  <tr key={trace.id} onClick={() => void open(trace.id)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") void open(trace.id); }}>
-                    <td>{formatDate(trace.created_at)}</td>
+                  <tr
+                    key={trace.id}
+                    aria-selected={selected?.id === trace.id}
+                    onClick={() => void open(trace.id)}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void open(trace.id);
+                    }}
+                  >
+                    <td className="mono">{formatDate(trace.created_at)}</td>
                     <td>
-                      <span className={`chip${trace.status === "error" ? " chip--bad" : " chip--ok"}`}>
+                      <span className={`badge ${trace.status === "error" ? "badge--bad" : "badge--ok"}`}>
                         {trace.status === "error" ? trace.error_type ?? "error" : "ok"}
                       </span>
                     </td>
-                    <td>{trace.model ?? "—"}</td>
-                    <td>{formatMs(trace.latency_ms)}</td>
-                    <td>{trace.input_tokens + trace.output_tokens}</td>
-                    <td>{trace.kb_chunks}</td>
-                    <td>{trace.tools_used}</td>
+                    <td className="mono">{trace.model ?? "—"}</td>
+                    <td className="mono table__num">{formatMs(trace.latency_ms)}</td>
+                    <td className="mono table__num">{trace.input_tokens + trace.output_tokens}</td>
+                    <td className="mono table__num">{trace.kb_chunks}</td>
+                    <td className="mono table__num">{trace.tools_used}</td>
                   </tr>
                 ))}
               </tbody>
@@ -191,33 +286,20 @@ export function TracesView() {
 
         {list && list.total > PAGE_SIZE && (
           <div className="row row--between">
-            <button type="button" className="login-secondary" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+            <button type="button" className="btn btn--sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
               ← Anteriores
             </button>
             <span className="muted">
-              Página {page + 1} de {totalPages}
+              Página <span className="mono">{page + 1}</span> de <span className="mono">{totalPages}</span>
             </span>
-            <button type="button" className="login-secondary" disabled={page + 1 >= totalPages} onClick={() => setPage((p) => p + 1)}>
+            <button type="button" className="btn btn--sm" disabled={page + 1 >= totalPages} onClick={() => setPage((p) => p + 1)}>
               Siguientes →
             </button>
           </div>
         )}
       </section>
 
-      {selected && (
-        <div className="modal-overlay" onClick={() => setSelected(null)}>
-          <div className="modal-card modal-card--wide" onClick={(event) => event.stopPropagation()}>
-            <h2>Detalle del turno</h2>
-            <p className="muted">{formatDate(selected.created_at)}</p>
-            <TraceView trace={selected} />
-            <div className="modal-actions">
-              <button type="button" className="login-secondary" onClick={() => setSelected(null)}>
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      {selected && <TraceDrawer trace={selected} onClose={closeDrawer} />}
+    </PageShell>
   );
 }

@@ -1,3 +1,4 @@
+import { AlertCircle, Check, Loader2, Trash2, UploadCloud, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
@@ -8,6 +9,7 @@ import {
   updateKbDocumentAccess,
   uploadKbDocument,
 } from "./api";
+import { PageShell } from "./PageShell";
 import type { KBDocument, KBSearchResponse, KBStats, KBUploadResult } from "./types";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -40,6 +42,15 @@ interface UploadLine {
   state: "uploading" | "done" | "error";
   results?: KBUploadResult[];
   error?: string;
+}
+
+function ErrorNotice({ message }: { message: string }) {
+  return (
+    <div className="notice notice--error" role="alert">
+      <AlertCircle size={16} strokeWidth={1.75} />
+      {message}
+    </div>
+  );
 }
 
 function UploadZone({ formats, onUploaded }: { formats: string[]; onUploaded: () => void }) {
@@ -112,6 +123,7 @@ function UploadZone({ formats, onUploaded }: { formats: string[]; onUploaded: ()
           if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
         }}
       >
+        <UploadCloud size={20} strokeWidth={1.75} aria-hidden="true" />
         <strong>Arrastra archivos aquí o haz clic para elegirlos</strong>
         <span>Formatos: {formats.join(", ") || "…"} · máximo 10 MB por archivo</span>
         <input
@@ -131,12 +143,24 @@ function UploadZone({ formats, onUploaded }: { formats: string[]; onUploaded: ()
           {lines.slice(0, 8).map((line, index) => (
             <li key={`${line.filename}-${index}`}>
               <span className="upload-list__name">{line.filename}</span>
-              {line.state === "uploading" && <span className="muted">Indexando…</span>}
-              {line.state === "error" && <span className="text-bad">{line.error}</span>}
+              {line.state === "uploading" && (
+                <span className="upload-list__state muted">
+                  <Loader2 size={14} strokeWidth={1.75} className="spin" />
+                  Indexando…
+                </span>
+              )}
+              {line.state === "error" && (
+                <span className="upload-list__state text-bad">
+                  <X size={14} strokeWidth={1.75} />
+                  {line.error}
+                </span>
+              )}
               {line.state === "done" &&
                 line.results?.map((result) => (
-                  <span key={result.id} className="chip chip--ok">
-                    {result.title} · {STATUS_TEXT[result.status]} · {result.chunk_count} fragmentos
+                  <span key={result.id} className="badge badge--ok">
+                    <Check size={12} strokeWidth={1.75} aria-hidden="true" />
+                    &nbsp;{result.title} · {STATUS_TEXT[result.status]} ·&nbsp;
+                    <span className="mono">{result.chunk_count}</span>&nbsp;fragmentos
                   </span>
                 ))}
             </li>
@@ -177,14 +201,22 @@ function SearchTester() {
         <input
           type="text"
           placeholder="Ej.: tarifa Bogotá a Leticia, código N-07, horario OFC-MED-003…"
+          aria-label="Consulta de búsqueda"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <button type="submit" disabled={loading || query.trim().length < 2}>
-          {loading ? "Buscando…" : "Buscar"}
+        <button type="submit" className="btn btn--primary" disabled={loading || query.trim().length < 2}>
+          {loading ? (
+            <>
+              <Loader2 size={14} strokeWidth={1.75} className="spin" />
+              Buscando…
+            </>
+          ) : (
+            "Buscar"
+          )}
         </button>
       </form>
-      {error && <div className="login-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
       {response && response.results.length === 0 && (
         <p className="muted">
           Nada relevante: el asistente respondería que no tiene esa información (o usaría una herramienta).
@@ -193,11 +225,18 @@ function SearchTester() {
       {response && response.results.length > 0 && (
         <ol className="hits">
           {response.results.map((hit) => (
-            <li key={`${hit.article_id}-${hit.chunk_index}`}>
-              <div className="hits__title">
-                {hit.title} <span className="muted">· fragmento {hit.chunk_index + 1} · relevancia {hit.score.toFixed(3)}</span>
+            <li key={`${hit.article_id}-${hit.chunk_index}`} className="hit">
+              <div className="hit__head">
+                <span className="hit__title">{hit.title}</span>
+                <span className="score-bar" role="img" aria-label={`Relevancia ${hit.score.toFixed(3)}`}>
+                  <span className="score-bar__fill" style={{ width: `${Math.max(0, Math.min(1, hit.score)) * 100}%` }} />
+                </span>
+                <span className="hit__score mono">{hit.score.toFixed(3)}</span>
               </div>
-              <p>{hit.snippet}</p>
+              <p className="hit__snippet">{hit.snippet}</p>
+              <span className="hit__meta">
+                Fragmento <span className="mono">{hit.chunk_index + 1}</span>
+              </span>
             </li>
           ))}
         </ol>
@@ -255,13 +294,11 @@ export function KnowledgeView() {
   }
 
   return (
-    <div className="view">
-      <header className="view__header">
-        <h1>Base de conocimiento</h1>
-        <p>Lo que el asistente consulta para responder sobre políticas, tarifas, oficinas y procedimientos.</p>
-      </header>
-
-      {error && <div className="login-error">{error}</div>}
+    <PageShell
+      title="Base de conocimiento"
+      description="Lo que el asistente consulta para responder sobre políticas, tarifas, oficinas y procedimientos."
+    >
+      {error && <ErrorNotice message={error} />}
 
       <div className="stat-cards">
         <div className="stat-card">
@@ -286,7 +323,9 @@ export function KnowledgeView() {
 
       <section className="card">
         <div className="card__head">
-          <h2>Documentos ({total})</h2>
+          <h2>
+            Documentos <span className="mono">({total})</span>
+          </h2>
           <label className="field-inline">
             Origen
             <select value={source} onChange={(event) => setSource(event.target.value)}>
@@ -311,7 +350,7 @@ export function KnowledgeView() {
                 <tr>
                   <th>Título</th>
                   <th>Origen</th>
-                  <th>Fragmentos</th>
+                  <th className="table__num">Fragmentos</th>
                   <th>Visible para</th>
                   <th>Indexado</th>
                   <th />
@@ -324,9 +363,9 @@ export function KnowledgeView() {
                       {doc.title}
                     </td>
                     <td>
-                      <span className="chip">{SOURCE_LABELS[doc.source_type] ?? doc.source_type}</span>
+                      <span className="badge">{SOURCE_LABELS[doc.source_type] ?? doc.source_type}</span>
                     </td>
-                    <td>{doc.chunk_count}</td>
+                    <td className="mono table__num">{doc.chunk_count}</td>
                     <td>
                       <select
                         className="select-small"
@@ -341,19 +380,25 @@ export function KnowledgeView() {
                         ))}
                       </select>
                     </td>
-                    <td className="muted">{formatDate(doc.indexed_at)}</td>
+                    <td className="mono muted">{formatDate(doc.indexed_at)}</td>
                     <td className="table__actions">
                       {confirmingId === doc.id ? (
                         <>
-                          <button type="button" className="link-danger" onClick={() => void remove(doc)}>
+                          <button type="button" className="btn btn--danger btn--sm" onClick={() => void remove(doc)}>
                             Sí, eliminar
-                          </button>
-                          <button type="button" className="link" onClick={() => setConfirmingId(null)}>
+                          </button>{" "}
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setConfirmingId(null)}>
                             Cancelar
                           </button>
                         </>
                       ) : (
-                        <button type="button" className="link-danger" onClick={() => setConfirmingId(doc.id)}>
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm"
+                          onClick={() => setConfirmingId(doc.id)}
+                          aria-label={`Eliminar ${doc.title}`}
+                        >
+                          <Trash2 size={14} strokeWidth={1.75} />
                           Eliminar
                         </button>
                       )}
@@ -365,6 +410,6 @@ export function KnowledgeView() {
           </div>
         )}
       </section>
-    </div>
+    </PageShell>
   );
 }
