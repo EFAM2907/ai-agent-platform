@@ -162,12 +162,30 @@ $CONN = gcloud sql instances describe $SQL --format="value(connectionName)"
 gcloud run deploy litellm `
   --image "$REGISTRY/litellm:v1" --region $REGION `
   --service-account "litellm-sa@$PROJECT_ID.iam.gserviceaccount.com" `
-  --port 4000 --memory 2Gi --cpu 1 --cpu-boost `
+  --port 4000 --memory 2Gi --cpu 1 --cpu-boost --timeout 170 `
   --min-instances 0 --max-instances 1 `
   --add-cloudsql-instances $CONN `
   --set-secrets "LITELLM_MASTER_KEY=LITELLM_MASTER_KEY:latest,LITELLM_SALT_KEY=LITELLM_SALT_KEY:latest,DATABASE_URL=LITELLM_DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest" `
   --allow-unauthenticated
 ```
+
+> **Timeouts: cada capa debe esperar más que la de dentro, y solo LiteLLM
+> reintenta.** Si el servicio ya está desplegado con el valor viejo (300 s):
+> `gcloud run services update litellm --region $REGION --timeout 170`.
+>
+> | Capa | Valor | Dónde |
+> |---|---|---|
+> | Intento de LiteLLM al modelo | 75 s | `router_settings.timeout` en `litellm_config.yaml` |
+> | Reintentos de LiteLLM | 1 (2 intentos) | `router_settings.num_retries` |
+> | API → LiteLLM | 160 s, `max_retries=0` | `app/llm/litellmprovider/litellm_provider.py` |
+> | Cloud Run de litellm | 170 s | `--timeout` (arriba) |
+>
+> El SDK de OpenAI reintenta 2 veces por defecto: con la API en 60 s, una
+> llamada exitosa de 68 s se descartó y se repitió (tokens pagados dos
+> veces), y la original quedó viva en LiteLLM hasta el `504` de los 300 s.
+> `tests/test_litellm_provider.py` falla si la API espera menos que el
+> presupuesto de LiteLLM. El 75 sale de solo 14 llamadas medidas (0,7 a
+> 68 s); conviene revisarlo con más datos.
 
 `--allow-unauthenticated` es la opción B: la protección real es la master
 key. Comprueba `https://<url-litellm>/health/readiness`.

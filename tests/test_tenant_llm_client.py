@@ -29,6 +29,7 @@ async def test_uses_decrypted_tenant_virtual_key_when_provisioned():
         base_url=settings.litellm_base_url.rstrip("/"),
         api_key="sk-tenant-real",
         timeout=LiteLLMProvider._REQUEST_TIMEOUT_SECONDS,
+        max_retries=LiteLLMProvider._MAX_RETRIES,
     )
 
 
@@ -45,6 +46,7 @@ async def test_falls_back_to_emergency_key_and_warns_when_not_provisioned(caplog
         base_url=settings.litellm_base_url.rstrip("/"),
         api_key=settings.litellm_emergency_fallback_key,
         timeout=LiteLLMProvider._REQUEST_TIMEOUT_SECONDS,
+        max_retries=LiteLLMProvider._MAX_RETRIES,
     )
     # Nunca la master key: no debe autenticar tráfico real de chat.
     assert client_class.call_args.kwargs["api_key"] != settings.litellm_master_key

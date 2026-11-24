@@ -434,3 +434,33 @@ def test_provider_configures_a_bounded_request_timeout():
         LiteLLMProvider(virtual_key="sk-test-virtual-key")
 
     assert client_class.call_args.kwargs["timeout"] == LiteLLMProvider._REQUEST_TIMEOUT_SECONDS
+
+
+def test_provider_does_not_let_the_openai_sdk_retry_on_its_own():
+    """El SDK de OpenAI reintenta 2 veces por defecto ante timeout, 429 y
+    5xx. Los reintentos tecnicos son SOLO de LiteLLM (ver app/llm/client.py):
+    si el SDK tambien reintenta, un timeout duplica la llamada al modelo y
+    deja la original viva en el proxy."""
+    with patch("app.llm.litellmprovider.litellm_provider.AsyncOpenAI") as client_class:
+        LiteLLMProvider(virtual_key="sk-test-virtual-key")
+
+    assert client_class.call_args.kwargs["max_retries"] == 0
+
+
+def test_api_timeout_outlasts_the_litellm_retry_budget():
+    """Cada capa debe esperar MAS que la de dentro. Si la API se rinde antes
+    de que LiteLLM termine sus intentos, tira respuestas validas lentas y
+    deja llamadas huerfanas en el proxy (paso en produccion: una llamada
+    exitosa de 68 s se descarto porque la API esperaba solo 60 s)."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).resolve().parent.parent / "litellm_config.yaml"
+    router_settings = yaml.safe_load(config_path.read_text(encoding="utf-8"))["router_settings"]
+
+    attempt_timeout = router_settings["timeout"]
+    attempts = router_settings["num_retries"] + 1
+    litellm_budget = attempt_timeout * attempts
+
+    assert LiteLLMProvider._REQUEST_TIMEOUT_SECONDS > litellm_budget
