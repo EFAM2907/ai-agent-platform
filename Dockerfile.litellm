@@ -1,0 +1,14 @@
+# Imagen de LiteLLM con la configuracion horneada.
+#
+# En docker-compose, litellm_config.yaml se monta como volumen. Cloud Run no
+# tiene ese tipo de volumen de archivos, asi que aqui el archivo viaja dentro
+# de la imagen. No contiene secretos: las keys llegan como variables de
+# entorno (os.environ/...) inyectadas desde Secret Manager.
+#
+# Misma version fijada que docker-compose.yml. Nunca `latest`.
+FROM ghcr.io/berriai/litellm:v1.83.10-stable
+
+COPY litellm_config.yaml /app/config.yaml
+
+# Cloud Run enruta al puerto del contenedor (se declara con --port 4000).
+CMD ["--config", "/app/config.yaml", "--port", "4000"]
