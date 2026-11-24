@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Git Flow: main (production), dev (integration) and release/* (stabilisation)
+  # run CI on every push, so a merge into them is verified too. Feature and
+  # hotfix branches are covered by their pull request below.
   push:
-    branches: [main]
+    branches: [main, dev, "release/**"]
   pull_request:
 
 # One run per branch/PR: a newer push cancels the older run.
