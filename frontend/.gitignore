@@ -1,4 +1,11 @@
 node_modules
 dist
-.env
 *.tsbuildinfo
+
+# Archivos de entorno (la CLI de Vercel descarga .env.local con tokens).
+# .env.example si se versiona: documenta las variables sin valores reales.
+.env*
+!.env.example
+
+# Enlace local de la CLI de Vercel con el proyecto
+.vercel
