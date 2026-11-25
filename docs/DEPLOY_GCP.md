@@ -1,8 +1,15 @@
 # Despliegue en Google Cloud (Cloud Run) — opción B
 
-> **Estado: plan sin probar.** Ningún comando de este documento se ha
-> ejecutado contra un proyecto real. Los puntos marcados con **[verificar]**
-> son supuestos razonables que hay que confirmar en el primer despliegue.
+> **Estado: ejecutado en un proyecto real** (noviembre de 2026, con créditos
+> de prueba, como entorno de aprendizaje). Verificado: migraciones con
+> `pgvector`, `/health`, Redis y el limitador de login, una llamada a una
+> herramienta del MCP con token delegado real desde un chat, la carga de datos
+> de ejemplo y el frontend en Vercel con CORS. **Sin verificar:** Gmail y
+> Drive, el poller y el programador de la KB, y la opción A (red privada).
+>
+> Las marcas **[verificar]** del texto eran los supuestos iniciales: donde hay
+> una nota **Verificado** debajo, manda la nota. Algunos comandos se
+> ejecutaron con los valores ya resueltos en lugar de las variables.
 > Complementa a [DEPLOY.md](DEPLOY.md) (mapa de servicios y variables) y no
 > lo repite: las variables obligatorias de la API están en su §2.
 
@@ -257,7 +264,7 @@ en el primer despliegue con la base vacía.
 gcloud run deploy mcp-server `
   --image "$REGISTRY/mcp:v1" --region $REGION `
   --service-account "mcp-sa@$PROJECT_ID.iam.gserviceaccount.com" `
-  --port 8100 --memory 256Mi --cpu 1 `
+  --port 8100 --memory 512Mi --cpu 1 --cpu-boost `
   --min-instances 0 --max-instances 1 `
   --set-env-vars "API_BASE_URL=$API_URL,STS_ISSUER=$API_URL,MCP_AUDIENCE=mcp-server,MCP_SERVER_PORT=8100" `
   --allow-unauthenticated

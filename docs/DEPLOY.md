@@ -1,10 +1,10 @@
 # Deployment guide
 
-> **Status: never deployed.** This project is "one step away from deploying":
-> it runs fully in Docker locally and CI is defined, but no real deployment
-> was ever made. `railway.json` has **not been tested on a real Railway
-> deployment**; it follows the documented schema only. Treat every
-> platform-specific step below as a plan to verify, not as proven.
+> **Status: deployed to Google Cloud Run** (November 2026, trial credits, a
+> learning environment rather than a production service). What was run and
+> verified there is recorded in [DEPLOY_GCP.md](DEPLOY_GCP.md). The Railway
+> path is still **untested**: `railway.json` follows the documented schema
+> only, so treat every Railway or AWS step below as a plan to verify.
 
 ## 1. Service map
 
