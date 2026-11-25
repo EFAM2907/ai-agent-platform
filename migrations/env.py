@@ -18,11 +18,7 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from app.core.config import settings
-from app.core.database import Base
-from app.organizations.models import Organization  # Register Organization model
-from app.users.models import User
-from app.auth.models import RefreshToken  # Register RefreshToken model
-from app.gmail.models import GmailConnection, GmailProcessedMessage  # Register Gmail models
+from app.models import Base  # noqa: F401  (imports every model so metadata is complete)
 # Keep the application on asyncpg while Alembic uses its synchronous driver.
 # This avoids running migrations through an asyncio event loop.
 config.set_main_option(
