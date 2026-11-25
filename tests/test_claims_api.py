@@ -38,6 +38,11 @@ def _open(tracking="854321", claim_type="dano", description=DESCRIPTION):
 async def test_open_claim_assigns_a_number_an_sla_and_history(db_session, client):
     org, user, _ = await _setup(db_session)
 
+    # Antes de la peticion, no despues: el servicio calcula el SLA con SU
+    # `now`, que es posterior a este. Medir contra un `now` tomado despues de
+    # responder daba "3 dias menos unos milisegundos" y el test fallaba los
+    # lunes y martes, cuando 3 dias habiles no cruzan un fin de semana.
+    before = datetime.now(timezone.utc)
     response = await client.post("/claims/", json=_open(), headers=_headers(user, org.id))
 
     assert response.status_code == 201
@@ -51,7 +56,7 @@ async def test_open_claim_assigns_a_number_an_sla_and_history(db_session, client
     assert [h["status"] for h in body["history"]] == ["abierto"]
     sla = datetime.fromisoformat(body["sla_due_at"])
     # REC-01 (dano) = 72 h = 3 dias habiles, pasado el momento de apertura.
-    assert timedelta(days=3) <= sla - datetime.now(timezone.utc) <= timedelta(days=6)
+    assert timedelta(days=3) <= sla - before <= timedelta(days=6)
 
 
 @pytest.mark.asyncio

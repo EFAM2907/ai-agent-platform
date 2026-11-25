@@ -29,7 +29,6 @@ eval_harness/
 docs/
 scripts/
 kb_content/
-litellm_config.yaml
 docker-compose.yml
 requirements-dev.txt
 README.md

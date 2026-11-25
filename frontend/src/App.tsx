@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { AlertCircle, Loader2, Menu } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
   deleteChatSession,
@@ -64,29 +65,56 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
 
   return (
     <div className="login-screen">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div className="login-logo" />
-        <h1>{PLATFORM_NAME}</h1>
-        <p>Inicia sesión para continuar</p>
-        <input
-          type="email"
-          placeholder="Correo"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
-        <input
-          type="password"
-          placeholder="Contraseña"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          required
-        />
-        {error && <div className="login-error">{error}</div>}
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Ingresando…" : "Ingresar"}
-        </button>
-      </form>
+      <div className="login-column">
+        <div className="login-brand">
+          <span className="logo-mark" aria-hidden="true">
+            A
+          </span>
+          {PLATFORM_NAME}
+        </div>
+        <form className="login-card" onSubmit={handleSubmit}>
+          <h1>Inicia sesión</h1>
+          <p>Usa la cuenta de tu organización.</p>
+          <div className="field">
+            <label htmlFor="login-email">Correo</label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="login-password">Contraseña</label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </div>
+          {error && (
+            <div className="login-error" role="alert">
+              <AlertCircle size={16} strokeWidth={1.75} />
+              <span>{error}</span>
+            </div>
+          )}
+          <button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 size={16} strokeWidth={1.75} className="spin" />
+                Ingresando…
+              </>
+            ) : (
+              "Continuar →"
+            )}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -109,6 +137,9 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
   const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
   const [view, setView] = useState<AppView>("chat");
+  // Mobile (< 768px): the sidebar is an off-canvas drawer.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
   const chat = useChat(onLoggedOut);
 
@@ -283,6 +314,15 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   return (
     <div className="app-layout">
+      <div className="mobile-bar">
+        <button type="button" onClick={() => setDrawerOpen(true)} aria-label="Abrir menú" aria-expanded={drawerOpen}>
+          <Menu size={16} strokeWidth={1.75} />
+        </button>
+        <span className="logo-mark" aria-hidden="true">
+          A
+        </span>
+        <strong>{PLATFORM_NAME}</strong>
+      </div>
       <Sidebar
         platformName={PLATFORM_NAME}
         organization={organization}
@@ -301,6 +341,8 @@ function MainApp({ onLoggedOut }: { onLoggedOut: () => void }) {
         view={view}
         onChangeView={setView}
         isAdmin={isAdmin}
+        open={drawerOpen}
+        onClose={closeDrawer}
       />
       {view === "chat" || !isAdmin ? (
         <MainChat

@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.sts import jwks as sts_jwks
 from app.health.api import router as health_router
 
-app = FastAPI(title="AI Agent Platform")
+app = FastAPI(title="AI Agent Platform", version="0.1.0")
 
 # The React frontend runs on a different origin, so the browser blocks
 # its calls unless that origin is allowed. Origins come from CORS_ORIGINS

@@ -1,10 +1,10 @@
 # Deployment guide
 
-> **Status: never deployed.** This project is "one step away from deploying":
-> it runs fully in Docker locally and CI is defined, but no real deployment
-> was ever made. `railway.json` has **not been tested on a real Railway
-> deployment**; it follows the documented schema only. Treat every
-> platform-specific step below as a plan to verify, not as proven.
+> **Status: deployed to Google Cloud Run** (November 2026, trial credits, a
+> learning environment rather than a production service). What was run and
+> verified there is recorded in [DEPLOY_GCP.md](DEPLOY_GCP.md). The Railway
+> path is still **untested**: `railway.json` follows the documented schema
+> only, so treat every Railway or AWS step below as a plan to verify.
 
 ## 1. Service map
 
@@ -136,7 +136,7 @@ Sources: <https://docs.litellm.ai/docs/proxy/master_key_rotations>,
    `LITELLM_BASE_URL=<litellm url> LITELLM_MASTER_KEY=<master> python -m scripts.create_emergency_fallback_key`.
    Importing the settings requires every mandatory variable, including `LITELLM_EMERGENCY_FALLBACK_KEY`: set a temporary placeholder for that one, and use `ENVIRONMENT=development` to skip production validation. Store the printed key as `LITELLM_EMERGENCY_FALLBACK_KEY`.
 4. **API**: the entrypoint validates config, runs `alembic upgrade head` under an advisory lock, then starts uvicorn. Healthcheck: `/health`.
-5. **MCP server** with `API_BASE_URL` = the API's private URL and the same `STS_ISSUER`/`MCP_AUDIENCE`. (Note: the root `.dockerignore` currently excludes `mcp_server/`, which breaks building the MCP image from the repo root; fix that before building it in a registry/CI.)
+5. **MCP server** with `API_BASE_URL` = the API's private URL and the same `STS_ISSUER`/`MCP_AUDIENCE`. Build it from the repo root: `docker build -f mcp_server/Dockerfile .` (the root `.dockerignore` does not exclude `mcp_server/`).
 6. **Frontend** on Vercel with `VITE_API_BASE_URL` set to the API's public URL.
 7. **Update `CORS_ORIGINS`** on the API with the frontend's final https URL and redeploy it.
 

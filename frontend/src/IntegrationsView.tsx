@@ -1,3 +1,4 @@
+import { AlertCircle, ExternalLink, HardDrive, Loader2, Mail } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   ApiError,
@@ -13,6 +14,7 @@ import {
   setDriveFolder,
   syncDrive,
 } from "./api";
+import { PageShell } from "./PageShell";
 import type {
   DriveFileOutcome,
   DrivePreview,
@@ -28,8 +30,39 @@ function formatDate(value: string | null | undefined): string {
   return new Date(value).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-function Dot({ on }: { on: boolean }) {
-  return <span className={`status-dot${on ? " status-dot--ok" : ""}`} aria-hidden="true" />;
+function StatusIndicator({ on }: { on: boolean }) {
+  return (
+    <span className="integration__status">
+      <span className={`status-dot${on ? " status-dot--ok" : ""}`} aria-hidden="true" />
+      {on ? "Conectado" : "Sin conectar"}
+    </span>
+  );
+}
+
+function ErrorNotice({ message }: { message: string }) {
+  return (
+    <div className="notice notice--error" role="alert">
+      <AlertCircle size={16} strokeWidth={1.75} />
+      {message}
+    </div>
+  );
+}
+
+function Pill({ label, value, tone }: { label: string; value: number; tone?: "ok" | "bad" }) {
+  return (
+    <span className={`pill${tone ? ` pill--${tone}` : ""}`}>
+      {label} <b>{value}</b>
+    </span>
+  );
+}
+
+function BusyLabel({ busy, label }: { busy: boolean; label: string }) {
+  return busy ? (
+    <>
+      <Loader2 size={14} strokeWidth={1.75} className="spin" />
+      {label}
+    </>
+  ) : null;
 }
 
 // ---------------------------------------------------------------------
@@ -103,83 +136,105 @@ function GmailCard({
     }
   }
 
+  const connected = !!status?.connected;
+
   return (
     <section className="card integration">
-      <div className="card__head">
-        <h2>
-          <Dot on={!!status?.connected} /> Gmail
-        </h2>
-        {status?.connected && <span className="muted">{status.google_email}</span>}
+      <div className="integration__head">
+        <span className="integration__icon" aria-hidden="true">
+          <Mail size={16} strokeWidth={1.75} />
+        </span>
+        <h2 className="integration__name">Gmail</h2>
+        <StatusIndicator on={connected} />
       </div>
-      <p className="muted">
+      {connected && status?.google_email && <div className="integration__account">{status.google_email}</div>}
+      <p className="integration__desc">
         El asistente responde por correo las consultas de seguimiento de guías (solo si quien escribe es el cliente del
         envío) y envía las invitaciones de usuarios nuevos.
       </p>
-      {error && <div className="login-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
 
-      {!status?.connected ? (
+      {!connected ? (
         <div className="row">
-          <button type="button" onClick={() => void connect()} disabled={busy !== null}>
-            {busy === "connect" ? "Abriendo Google…" : "Conectar Gmail"}
+          <button type="button" className="btn btn--primary" onClick={() => void connect()} disabled={busy !== null}>
+            <BusyLabel busy={busy === "connect"} label="Abriendo Google…" />
+            {busy !== "connect" && "Conectar Gmail"}
           </button>
-          <button type="button" className="login-secondary" onClick={() => void refresh()} disabled={busy !== null}>
-            {busy === "refresh" ? "Actualizando…" : "Ya autoricé, actualizar"}
+          <button type="button" className="btn" onClick={() => void refresh()} disabled={busy !== null}>
+            <BusyLabel busy={busy === "refresh"} label="Actualizando…" />
+            {busy !== "refresh" && "Ya autoricé, actualizar"}
           </button>
         </div>
       ) : (
         <>
           <dl className="meta">
             <dt>Conectado</dt>
-            <dd>{formatDate(status.connected_at)}</dd>
+            <dd className="mono">{formatDate(status.connected_at)}</dd>
             <dt>Última revisión</dt>
-            <dd>{formatDate(status.last_polled_at)}</dd>
+            <dd className="mono">{formatDate(status.last_polled_at)}</dd>
           </dl>
           {pollResult && (
-            <div className="password-success">
-              Revisados {pollResult.examined}, respondidos {pollResult.replied}, sin resolver{" "}
-              {pollResult.skipped + pollResult.failed}.
+            <div className="pills" role="status" aria-label="Resultado de la revisión">
+              <Pill label="examinados" value={pollResult.examined} />
+              <Pill label="respondidos" value={pollResult.replied} tone="ok" />
+              <Pill label="omitidos" value={pollResult.skipped} />
+              <Pill label="fallidos" value={pollResult.failed} tone={pollResult.failed > 0 ? "bad" : undefined} />
             </div>
           )}
           <div className="row">
-            <button type="button" onClick={() => void poll()} disabled={busy !== null}>
-              {busy === "poll" ? "Revisando…" : "Revisar ahora"}
+            <button type="button" className="btn btn--primary" onClick={() => void poll()} disabled={busy !== null}>
+              <BusyLabel busy={busy === "poll"} label="Revisando…" />
+              {busy !== "poll" && "Revisar ahora"}
             </button>
-            {confirmingDisconnect ? (
-              <>
-                <span className="muted">¿Desconectar esta cuenta?</span>
-                <button type="button" className="link-danger" onClick={() => void disconnect()} disabled={busy !== null}>
-                  Sí, desconectar
-                </button>
-                <button type="button" className="link" onClick={() => setConfirmingDisconnect(false)}>
-                  Cancelar
-                </button>
-              </>
-            ) : (
-              <button type="button" className="login-secondary" onClick={() => setConfirmingDisconnect(true)}>
+            {!confirmingDisconnect && (
+              <button type="button" className="btn btn--ghost" onClick={() => setConfirmingDisconnect(true)}>
                 Desconectar
               </button>
             )}
           </div>
+          {confirmingDisconnect && (
+            <div className="confirm-row" role="alert">
+              <span className="confirm-row__label">¿Desconectar esta cuenta?</span>
+              <button type="button" className="btn btn--danger btn--sm" onClick={() => void disconnect()} disabled={busy !== null}>
+                Sí, desconectar
+              </button>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setConfirmingDisconnect(false)}>
+                Cancelar
+              </button>
+            </div>
+          )}
 
           {unresolved && unresolved.length > 0 && (
             <div className="subsection">
-              <h3>Correos sin resolver ({unresolved.length})</h3>
-              <ul className="plain-list">
-                {unresolved.slice(0, 8).map((message) => (
-                  <li key={message.id}>
-                    <strong>{message.sender ?? "remitente desconocido"}</strong>
-                    <span className="muted"> — {message.detail ?? message.outcome}</span>
-                    {message.gmail_link && (
-                      <>
-                        {" "}
-                        <a href={message.gmail_link} target="_blank" rel="noreferrer">
-                          Ver
-                        </a>
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <h3>
+                Correos sin resolver <span className="mono">({unresolved.length})</span>
+              </h3>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Remitente</th>
+                      <th>Detalle</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unresolved.slice(0, 8).map((message) => (
+                      <tr key={message.id}>
+                        <td className="table__title">{message.sender ?? "remitente desconocido"}</td>
+                        <td className="table__title muted">{message.detail ?? message.outcome}</td>
+                        <td className="table__actions">
+                          {message.gmail_link && (
+                            <a className="link" href={message.gmail_link} target="_blank" rel="noreferrer">
+                              Ver <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
+                            </a>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>
@@ -219,11 +274,13 @@ function OutcomeTable({ files }: { files: DriveFileOutcome[] }) {
                 {file.name}
               </td>
               <td>
-                <span className={`chip${file.status === "failed" ? " chip--bad" : file.status === "new" || file.status === "changed" ? " chip--ok" : ""}`}>
+                <span
+                  className={`badge${file.status === "failed" ? " badge--bad" : file.status === "new" || file.status === "changed" ? " badge--ok" : ""}`}
+                >
                   {OUTCOME_LABELS[file.status]}
                 </span>
               </td>
-              <td className="muted">{file.reason ?? ""}</td>
+              <td className="table__title muted">{file.reason ?? ""}</td>
             </tr>
           ))}
         </tbody>
@@ -321,26 +378,30 @@ function DriveCard({
 
   return (
     <section className="card integration">
-      <div className="card__head">
-        <h2>
-          <Dot on={connected} /> Google Drive
-        </h2>
-        {connected && <span className="muted">{status?.google_email}</span>}
+      <div className="integration__head">
+        <span className="integration__icon" aria-hidden="true">
+          <HardDrive size={16} strokeWidth={1.75} />
+        </span>
+        <h2 className="integration__name">Google Drive</h2>
+        <StatusIndicator on={connected} />
       </div>
-      <p className="muted">
+      {connected && status?.google_email && <div className="integration__account">{status.google_email}</div>}
+      <p className="integration__desc">
         Sincroniza una carpeta de Drive con la base de conocimiento: documentos de Google, Word, Excel, PDF y Markdown.
         Solo lectura — la aplicación nunca modifica tus archivos. Lo que cambia se actualiza solo y lo que borras de la
         carpeta se retira del asistente.
       </p>
-      {error && <div className="login-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
 
       {!connected ? (
         <div className="row">
-          <button type="button" onClick={() => void connect()} disabled={busy !== null}>
-            {busy === "connect" ? "Abriendo Google…" : "Conectar Google Drive"}
+          <button type="button" className="btn btn--primary" onClick={() => void connect()} disabled={busy !== null}>
+            <BusyLabel busy={busy === "connect"} label="Abriendo Google…" />
+            {busy !== "connect" && "Conectar Google Drive"}
           </button>
-          <button type="button" className="login-secondary" onClick={() => void refresh()} disabled={busy !== null}>
-            {busy === "refresh" ? "Actualizando…" : "Ya autoricé, actualizar"}
+          <button type="button" className="btn" onClick={() => void refresh()} disabled={busy !== null}>
+            <BusyLabel busy={busy === "refresh"} label="Actualizando…" />
+            {busy !== "refresh" && "Ya autoricé, actualizar"}
           </button>
         </div>
       ) : (
@@ -350,15 +411,17 @@ function DriveCard({
               <input
                 type="text"
                 placeholder="Pega el enlace de la carpeta de Drive (o su id)"
+                aria-label="Enlace o id de la carpeta de Drive"
                 value={folderInput}
                 onChange={(event) => setFolderInput(event.target.value)}
                 required
               />
-              <button type="submit" disabled={busy !== null || !folderInput.trim()}>
-                {busy === "folder" ? "Verificando…" : "Usar esta carpeta"}
+              <button type="submit" className="btn btn--primary" disabled={busy !== null || !folderInput.trim()}>
+                <BusyLabel busy={busy === "folder"} label="Verificando…" />
+                {busy !== "folder" && "Usar esta carpeta"}
               </button>
               {editingFolder && (
-                <button type="button" className="login-secondary" onClick={() => setEditingFolder(false)}>
+                <button type="button" className="btn btn--ghost" onClick={() => setEditingFolder(false)}>
                   Cancelar
                 </button>
               )}
@@ -376,23 +439,24 @@ function DriveCard({
                   </button>
                 </dd>
                 <dt>Última sincronización</dt>
-                <dd>{formatDate(status?.last_synced_at)}</dd>
-                {last && (
-                  <>
-                    <dt>Resultado</dt>
-                    <dd>
-                      {last.documents} indexados · {last.unchanged} sin cambios · {last.pruned} retirados
-                      {last.failed.length > 0 && ` · ${last.failed.length} con error`}
-                    </dd>
-                  </>
-                )}
+                <dd className="mono">{formatDate(status?.last_synced_at)}</dd>
               </dl>
+              {last && (
+                <div className="pills" aria-label="Resultado de la última sincronización">
+                  <Pill label="indexados" value={last.documents} tone="ok" />
+                  <Pill label="sin cambios" value={last.unchanged} />
+                  <Pill label="retirados" value={last.pruned} />
+                  {last.failed.length > 0 && <Pill label="con error" value={last.failed.length} tone="bad" />}
+                </div>
+              )}
               <div className="row">
-                <button type="button" onClick={() => void doSync()} disabled={busy !== null}>
-                  {busy === "sync" ? "Sincronizando…" : "Sincronizar ahora"}
+                <button type="button" className="btn btn--primary" onClick={() => void doSync()} disabled={busy !== null}>
+                  <BusyLabel busy={busy === "sync"} label="Sincronizando…" />
+                  {busy !== "sync" && "Sincronizar ahora"}
                 </button>
-                <button type="button" className="login-secondary" onClick={() => void doPreview()} disabled={busy !== null}>
-                  {busy === "preview" ? "Consultando…" : "Ver qué cambiaría"}
+                <button type="button" className="btn" onClick={() => void doPreview()} disabled={busy !== null}>
+                  <BusyLabel busy={busy === "preview"} label="Consultando…" />
+                  {busy !== "preview" && "Ver qué cambiaría"}
                 </button>
               </div>
             </>
@@ -400,10 +464,12 @@ function DriveCard({
 
           {preview && (
             <div className="subsection">
-              <h3>
-                {preview.new} nuevos · {preview.changed} modificados · {preview.unchanged} sin cambios ·{" "}
-                {preview.unsupported} no soportados
-              </h3>
+              <div className="pills" aria-label="Vista previa de la sincronización">
+                <Pill label="nuevos" value={preview.new} tone="ok" />
+                <Pill label="modificados" value={preview.changed} tone="ok" />
+                <Pill label="sin cambios" value={preview.unchanged} />
+                <Pill label="no soportados" value={preview.unsupported} />
+              </div>
               {preview.truncated && (
                 <p className="muted">La carpeta tiene demasiados archivos; se muestran los primeros 500 y no se retira nada.</p>
               )}
@@ -413,9 +479,11 @@ function DriveCard({
 
           {syncResult && (
             <div className="subsection">
-              <div className="password-success">
-                Sincronizado: {syncResult.documents} indexados, {syncResult.unchanged} sin cambios,{" "}
-                {syncResult.pruned} retirados.
+              <div className="pills" role="status" aria-label="Resultado de la sincronización">
+                <Pill label="indexados" value={syncResult.documents} tone="ok" />
+                <Pill label="sin cambios" value={syncResult.unchanged} />
+                <Pill label="retirados" value={syncResult.pruned} />
+                {syncResult.failed.length > 0 && <Pill label="con error" value={syncResult.failed.length} tone="bad" />}
               </div>
               {(syncResult.failed.length > 0 || syncResult.unsupported.length > 0) && (
                 <OutcomeTable files={[...syncResult.failed, ...syncResult.unsupported]} />
@@ -423,26 +491,27 @@ function DriveCard({
             </div>
           )}
 
-          <div className="row row--end">
-            {confirmingDisconnect ? (
-              <>
-                <label className="field-inline">
-                  <input type="checkbox" checked={removeDocs} onChange={(event) => setRemoveDocs(event.target.checked)} />
-                  También quitar los documentos de Drive del asistente
-                </label>
-                <button type="button" className="link-danger" onClick={() => void disconnect()} disabled={busy !== null}>
-                  Sí, desconectar
-                </button>
-                <button type="button" className="link" onClick={() => setConfirmingDisconnect(false)}>
-                  Cancelar
-                </button>
-              </>
-            ) : (
-              <button type="button" className="login-secondary" onClick={() => setConfirmingDisconnect(true)}>
+          {confirmingDisconnect ? (
+            <div className="confirm-row" role="alert">
+              <label className="field-inline">
+                <input type="checkbox" checked={removeDocs} onChange={(event) => setRemoveDocs(event.target.checked)} />
+                También quitar los documentos de Drive del asistente
+              </label>
+              <span className="confirm-row__label" />
+              <button type="button" className="btn btn--danger btn--sm" onClick={() => void disconnect()} disabled={busy !== null}>
+                Sí, desconectar
+              </button>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setConfirmingDisconnect(false)}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <div className="row row--end">
+              <button type="button" className="btn btn--ghost" onClick={() => setConfirmingDisconnect(true)}>
                 Desconectar
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </>
       )}
     </section>
@@ -461,13 +530,14 @@ export function IntegrationsView({
   onDriveStatusChange: (status: DriveStatus) => void;
 }) {
   return (
-    <div className="view">
-      <header className="view__header">
-        <h1>Integraciones</h1>
-        <p>Conecta las cuentas de tu organización. Cada integración es de tu organización y no se comparte con otras.</p>
-      </header>
-      <GmailCard status={gmailStatus} onStatusChange={onGmailStatusChange} />
-      <DriveCard status={driveStatus} onStatusChange={onDriveStatusChange} />
-    </div>
+    <PageShell
+      title="Integraciones"
+      description="Conecta las cuentas de tu organización. Cada integración es de tu organización y no se comparte con otras."
+    >
+      <div className="integration-grid">
+        <GmailCard status={gmailStatus} onStatusChange={onGmailStatusChange} />
+        <DriveCard status={driveStatus} onStatusChange={onDriveStatusChange} />
+      </div>
+    </PageShell>
   );
 }
